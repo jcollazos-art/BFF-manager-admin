@@ -1,0 +1,634 @@
+# Arquitectura — bff-manager-admin
+
+Cómo está construido este BFF, por qué, y las convenciones que toda feature nueva debe seguir. `features/employee` es la implementación de referencia: ante la duda, se copia su forma.
+
+## 1. Qué es este proyecto
+
+BFF en **FastAPI + SQLAlchemy 2.0** para las herramientas de manager/admin. Lee y escribe directamente sobre la misma base Postgres que usa `manage-admin-api` (NestJS/TypeORM) para las tablas `employee_*`. No es un wrapper de la API REST de `manage-admin-api`: es el mismo rol que cumple `bff-lsg-placement` con su propia base.
+
+El objetivo inmediato es reemplazar las queries escritas a mano en Retool por endpoints con contrato documentado (OpenAPI), validación y transacciones.
+
+## 2. De dónde viene este diseño
+
+El diseño parte de lo aprendido en `bff-lsg-placement`, que usaba solo **SQLAlchemy Core** (`Table` + `select()`/`insert()` manuales):
+
+- **Cada relación nueva costaba ~15 ediciones de archivos**: schema, port, repositorio, use cases, subconsultas `array_agg` a mano, filtros, controller y tests. Todo eso para una relación 1-a-muchos genérica.
+- **El "GET anidado" siempre se escribía a mano**, con `array_agg`/`JSON_AGG` o fetch-y-merge en Python.
+- **Los Fakes de test reimplementaban lógica** y se desincronizaban del repositorio real.
+- **Cada feature reinventó la paginación, los filtros y la forma de respuesta**, y terminaron divergiendo: `order_by` vs `sort` en el mismo archivo, cuatro defaults distintos de `per_page` y respuestas paginadas armadas a mano sin `response_model`.
+- **Se crearon tablas en la base sin migración ni `GRANT` coordinado**, y eso tumbó producción.
+
+Se preservó lo que sí funcionaba: separación por feature, bulk con savepoint por ítem (best-effort), manejador global de errores (`AppError`), lista blanca de identificadores en SQL dinámico, `merge_query_filters`.
+
+## 3. Dos tracks de acceso a datos
+
+### Track A — ORM declarativo (lo que usa `employee`)
+
+Para todo lo que sea "dame o edita esta entidad y sus hijos". Las relaciones se declaran **una sola vez** en `models.py`:
+
+```python
+class EmployeePerson(Base):
+    __tablename__ = "employee_persons"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    roles: Mapped[List["EmployeeRole"]] = relationship(back_populates="person", lazy="raise")
+    technologies: Mapped[List["EmployeeTechnology"]] = relationship(back_populates="person", lazy="raise")
+```
+
+`lazy="raise"` es obligatorio en toda relación: si alguna se accede sin haberla cargado explícitamente, falla en lugar de disparar un N+1 silencioso. Es el equivalente a que Prisma obligue a escribir `include`. Con esto, el detalle completo de un empleado, que en Retool eran 7 queries, es **una sola** query con `selectinload` (`EmployeeRepository.get_person_detail`).
+
+### Track B — Reportería (SQL crudo / Core)
+
+Para pivots, CTEs, agregaciones con `FILTER (WHERE ...)` y dashboards. No se fuerza a pasar por `relationship()`, porque ahí el ORM se vuelve torpe y lento. Va en `reports.py` de cada feature (todavía no existe ninguno), con lista blanca para cualquier identificador dinámico.
+
+**Regla de decisión**:
+- ¿"Dame esta entidad (o pocas) con sus relaciones, para mostrar o editar"? → **Track A**.
+- ¿"Cuenta, agrega o pivotea muchas filas para un reporte"? → **Track B**.
+
+## 4. Estructura del proyecto
+
+```
+app/
+  main.py                 # FastAPI app, handlers globales de errores, CORS, middleware
+  config.py               # variables de entorno
+  api/v1.py               # router /v1 - incluye el router de cada feature
+  infrastructure/
+    database.py           # engine, SessionLocal, Base (DeclarativeBase), get_db
+  shared/
+    errors.py             # AppError, NotFoundError, ConflictError, InvalidFieldError, get_or_404
+    responses.py          # Page[T], Envelope[T]
+    pagination.py         # pagination_params(), sort_params() - fábricas de Depends
+    query_filters.py      # merge_query_filters
+    repository.py         # BaseRepository - CRUD genérico + bulk best-effort
+    projection.py         # parse_fields (portado, aún sin usar - ver sección 8)
+    permissions.py        # check_permission (stub - no hay auth todavía)
+    middleware.py         # RequestTimingMiddleware (log de método, ruta, status, duración)
+  features/
+    employee/
+      models.py           # modelos ORM del agregado (todas sus tablas en un módulo)
+      repository.py       # EmployeeRepository(BaseRepository) - solo consultas propias
+      use_cases/
+        query.py          # funciones de lectura
+        write.py          # funciones de escritura
+      schemas/
+        request.py        # modelos Pydantic de entrada (los "DTOs" de entrada)
+        response.py       # modelos Pydantic de salida (response_model)
+      controller.py       # rutas FastAPI
+```
+
+### Flujo de una request
+
+```
+controller  →  use_cases  →  repository  →  models (ORM)  →  Postgres
+   │              │              │
+   │              │              └─ ejecuta / hace flush, nunca commit
+   │              └─ reglas del caso de uso; convierte Pydantic → dict
+   └─ valida entrada (schemas/request), inyecta repo con Depends, envuelve en Envelope/Page
+```
+
+**La sesión es la unidad de trabajo de la request.** `get_db` abre la sesión, hace **un solo `commit`** al final si todo salió bien y `rollback` si hubo una excepción. Ni los repositorios ni los use cases hacen commit, así que un flujo de varios pasos nunca queda aplicado a medias.
+
+## 5. Convenciones de código
+
+El enfoque es pragmático, no hexagonal estricto. El dominio **son** los modelos ORM del Track A, así que no hay ports/ABCs: con una sola implementación (SQLAlchemy) y el dominio ya acoplado al ORM, una interfaz no aislaría nada y solo duplicaría firmas.
+
+### Organización
+- **Un módulo agrupa lo que cambia junto.** En Python la unidad es el módulo, no la clase, así que tener varias clases por archivo es lo normal (a diferencia de la convención "una clase por archivo" de Java/TS). Si un módulo pasa de ~400–500 líneas, se convierte en paquete (`models/__init__.py` re-exportando) sin romper imports.
+- **`schemas/` para Pydantic, `models.py` para ORM.** No se mezclan: `models` describe la tabla y `schemas` describe el contrato HTTP.
+
+### Repositorios
+- **Uno por agregado, no por tabla**, heredando de `shared/repository.py::BaseRepository`. `EmployeeRepository` cubre `employee_persons` y todas sus tablas hijas.
+- La feature **solo escribe las consultas con forma propia**: listado filtrado, detalle con `selectinload`. Todo lo demás viene de la base, que recibe el modelo como parámetro:
+
+| Tipo | Métodos de `BaseRepository` |
+|---|---|
+| Lectura | `get`, `get_many(ids)`, `find_by(**igualdades)`, `exists` |
+| Escritura de una fila | `create`, `update`, `update_by_id` (lanza `NotFoundError`), `delete` |
+| Escritura masiva | `create_many`, `update_many`, `upsert_many(required_on_create=...)`, `delete_many` |
+| Transacción | `savepoint` (para loops best-effort propios) |
+
+- **Bulk best-effort**: `create_many`, `update_many` y `upsert_many` ejecutan cada ítem en su propio SAVEPOINT. Si un ítem falla, solo ese se revierte. Todos devuelven `[{"index", "ok", "id"}]` o `[{"index", "ok", "error"}]`, y el controller responde `{"ok": all(...), "results": [...]}`.
+- **`delete_many` es todo o nada** (una sola sentencia `DELETE ... WHERE id IN (...)`).
+- `create`/`update` asignan `created_at`/`updated_at` con el `now` que reciben del use case.
+- Una sola capa de herencia; la base no lleva lógica de negocio.
+
+### Use cases
+- **Funciones, no clases.** Una clase con solo `__init__` + `execute` es una función con pasos de más. Reciben el repositorio como primer parámetro: `write.update_position(repo, position_id, item)`.
+- Convierten el Pydantic a dict (`model_dump(exclude_none=True)`) y delegan al repositorio. Cuando el caso es genérico, una sola función sirve para varios modelos: `write.create(repo, EmployeeRole, item)`, `write.bulk_update_by_id(repo, EmployeePosition, items)`.
+- Una clase solo se justifica si guarda estado o tiene varios métodos con lógica real.
+- Si algún día hace falta sustituir el repositorio (otra fuente de datos, un doble de test), se declara un `typing.Protocol` en ese momento, solo para ese caso.
+
+### Controllers
+- El repositorio se inyecta con una dependencia de la feature:
+  ```python
+  def get_repository(db: Session = Depends(get_db)) -> EmployeeRepository:
+      return EmployeeRepository(db)
+  ```
+- **Las rutas estáticas van antes que las rutas con parámetro.** FastAPI evalúa en orden de declaración: si `PATCH /positions/{position_id}` va antes que `PATCH /positions/bulk`, `"bulk"` se captura como `position_id` y responde 422. Este bug existió en `employee`.
+- Toda respuesta declara `response_model` con `Envelope[XOut]` o `Page[XOut]`.
+
+### Modelos y tipos
+- **El tipo del modelo debe coincidir con el de la columna real en Postgres**, no con lo que diga otra fuente (Retool, TypeORM). Las columnas `numeric(p,s)` se mapean como `Mapped[Optional[Decimal]] = mapped_column(Numeric)`, entran como `Decimal` en `schemas/request.py` y salen como `float` en `schemas/response.py`, para que el JSON tenga números y no strings. Mapearlas como `int` rompió `GET /details/{id}` con `monthly_sales_price = 6114.78`.
+  - Para verificar tipos: `select column_name, data_type, numeric_precision, numeric_scale from information_schema.columns where table_name = '...'`.
+- **Los ids de catálogos de otros sistemas** (`role_id`, `seniority_id`, `technology_id`, `silo_id`, `cost_center_id`, etc.) son enteros planos, sin FK ni `relationship()`. Resolver sus nombres le corresponde a la feature dueña del catálogo.
+- Solo las relaciones **dentro del agregado** se declaran como `ForeignKey` + `relationship()`.
+
+### Cross-feature
+- Cuando exista una segunda feature, la única frontera entre features será un `services.py` en la feature dueña. Una feature nunca importa el repositorio ni los modelos de otra.
+
+## 6. Estandarización transversal (`shared/`)
+
+Todo lo transversal se escribe una vez en `shared/`. Las features lo consumen vía import o `Depends` y nunca lo copian.
+
+### 6.1 Errores
+
+Jerarquía `AppError` → `NotFoundError` (404), `ConflictError` (409), `InvalidFieldError` (400), cada una con un `code` legible por máquina separado del `detail` legible por humano. El handler global de `main.py` responde:
+
+```json
+{"code": "NOT_FOUND", "detail": "employee_positions id -1 not found"}
+```
+
+Los errores de validación de Pydantic se normalizan en el mismo lugar:
+
+```json
+{"code": "VALIDATION_ERROR", "detail": "Validation error", "errors": [{"field": "...", "message": "...", "type": "..."}]}
+```
+
+El frontend ramifica sobre `code`, nunca haciendo string-matching sobre `detail`. Cualquier integración externa futura (ERP, Slack, etc.) debe traducir sus errores en su propio handler, sin dejar escapar la excepción cruda.
+
+### 6.2 Forma de respuesta
+
+```python
+class Page(BaseModel, Generic[T]):      # listados
+    data: List[T]
+    total: int
+    page: int
+    per_page: int
+
+class Envelope(BaseModel, Generic[T]):  # una entidad
+    data: T
+```
+
+Se usan siempre como `response_model`. Así el contrato queda documentado automáticamente en Swagger (`/docs`), y un cambio global (por ejemplo, agregar `has_next`) se hace en un solo lugar. Los `XOut` usan `ConfigDict(from_attributes=True)` y se serializan directamente desde los objetos ORM, sin armar dicts a mano.
+
+### 6.3 Validación y permisos: `Depends`, no decoradores propios
+
+Un decorador de Python oculta la firma real de la función, y FastAPI necesita esa firma para construir OpenAPI y para la inyección de dependencias. Por eso la validación y los permisos transversales se hacen con `Depends()`. Si se quiere azúcar con forma de decorador (`@requires_permission("x")`), debe ser una envoltura delgada que agregue un `Depends(check_permission("x"))`; la lógica nunca debe vivir en el decorador. `shared/permissions.py` muestra esa forma, pero hoy es un stub (ver sección 8).
+
+### 6.4 Paginación, orden y filtros
+
+`Pagination` y `Sort` se exponen como **fábricas** de dependencias. La regla de validación vive en un solo lugar, y cada ruta puede pedir otros límites de forma explícita:
+
+```python
+pagination: Pagination = Depends(pagination_params())                         # defaults: 20, máx 200
+pagination: Pagination = Depends(pagination_params(default_per_page=1000, max_per_page=100_000))  # export
+sort: Sort = Depends(sort_params(default_field="id"))
+```
+
+Cada feature solo declara su propio `FilterX(BaseModel)`. `merge_query_filters(request, filters)` agrega al dict de filtros cualquier querystring extra que no esté declarada, así que un filtro ad hoc nuevo no obliga a tocar la firma del controller. Las columnas por las que se puede ordenar pasan por una lista blanca en el repositorio (`_SORTABLE_FIELDS`).
+
+Lo que no debe variar por endpoint (la forma del error, `Page[T]`) queda fijo a propósito. La personalización es para los casos que realmente la necesitan.
+
+## 7. Cómo agregar una feature nueva
+
+1. **Verificar los tipos reales** de las tablas en `information_schema.columns`, sobre todo las columnas `numeric`.
+2. `features/<feature>/models.py`: los modelos del agregado, con `relationship(..., lazy="raise")` dentro del agregado y enteros planos para los ids de catálogos externos.
+3. `features/<feature>/schemas/request.py` y `schemas/response.py`: los `XCreateItem`, `XUpdateItem`, `XBulkUpdateItem` (con `id`) y los `XOut` (`from_attributes=True`).
+4. `features/<feature>/repository.py`: `class XRepository(BaseRepository)`, solo con las consultas propias (listado con filtros y `_SORTABLE_FIELDS`, detalle con `selectinload`).
+5. `features/<feature>/use_cases/query.py` y `write.py`: funciones que reciben `repo`. Para CRUD genérico, se reutiliza el patrón de `employee` (`create`, `bulk_update_by_id`).
+6. `features/<feature>/controller.py`: `router = APIRouter(prefix="/<feature>")`, `get_repository`, rutas estáticas antes que las de parámetro, `response_model` en todo.
+7. Registrarlo en `app/api/v1.py` con `router.include_router(...)`.
+8. Si la feature crea tablas: su migración con el `GRANT` al rol de la app, en el mismo PR (ver sección 8).
+
+## 8. Pendientes y decisiones abiertas
+
+- **Autenticación**: no existe. `shared/permissions.py` es un stub que lee un header. Antes de exponer el BFF, hay que agregar una feature de auth y poner `dependencies=[Depends(get_current_user)]` en cada router.
+- **Tests**: diferidos a propósito. Cuando se retomen, la idea es usar integración contra un motor real (SQLite en memoria o testcontainer), no Fakes, para que `relationship()`, `selectinload` y los SAVEPOINT se ejecuten como en producción.
+- **Migraciones**: aún no hay Alembic. Regla para cuando se cree cualquier tabla: la migración y el `GRANT` al rol de la app van en el mismo PR. Una tabla que existe en la base sin permisos coordinados es una caída de producción en espera.
+- **Ruta duplicada del detalle**: `GET /employee/details/{id}` (visible en Swagger) y `GET /employee/persons/{id}` (alias oculto con `include_in_schema=False`) apuntan a la misma función. Hay que confirmar cuál consume el frontend y dejar solo una. `/persons/{id}` es la consistente con el resto de rutas.
+- **`shared/projection.py`** (`parse_fields`): portado de `bff-lsg-placement` pero sin usar. Una proyección dinámica de campos choca con un `response_model` fijo; falta decidir si se adopta.
+- **Tablas no modeladas**: `employee_comments`, `employee_person_comments`, `company_tech_partners` y `cost_employee_history` están en la especificación (Anexo A) sin operaciones definidas. Se agregan cuando haya un requerimiento concreto.
+- **Riesgos del ORM**: el N+1 está mitigado por diseño con `lazy="raise"`. Lo que sí exige aprendizaje es entender el *unit of work* y el identity map de la sesión (por qué `flush` no es `commit`, por qué un objeto modificado se persiste sin llamar a `save`).
+
+---
+
+## Anexo A — Especificación original del módulo Employee (Retool)
+
+El módulo `employee` reemplaza la ventana de edición de un solo empleado en Retool. Lo que sigue es el material de origen, tal como venía de Retool, y se conserva como referencia de qué se migró.
+
+> ⚠️ **Los tipos de columna de este anexo no son confiables.** Retool reportaba como `integer` columnas que en Postgres son `numeric(10,2)`: `salary`, `additional_salary`, `cost`, `allocation`, `monthly_sales_price` y `hourly_sales_price`, además de `bonus`, que es `numeric(4,3)`. La fuente de verdad es `information_schema.columns` (ver sección 5, "Modelos y tipos").
+
+### Tablas
+
+```json
+[
+  {
+    "entity_name": "employee_comments",
+    "columns": {
+      "id": "integer",
+      "person_id": "integer",
+      "comment": "string",
+      "retool_user": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "employee_person_comments",
+    "columns": {
+      "id": "integer",
+      "person_id": "integer",
+      "comment": "string",
+      "reported_by": "string",
+      "is_active": "boolean",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "company_tech_partners",
+    "columns": {
+      "id": "integer",
+      "person_id": "integer",
+      "is_active": "boolean",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "employee_persons",
+    "columns": {
+      "id": "integer",
+      "first_name": "string",
+      "last_name": "string",
+      "identification_type_id": "integer",
+      "city_id": "integer",
+      "identification": "string",
+      "photo_url": "string",
+      "nationality_id": "integer",
+      "birth_date": "timestamp",
+      "phone_number": "string",
+      "personal_email": "string",
+      "corporate_email": "string",
+      "address": "string",
+      "cv_url": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "cost_employee_history",
+    "columns": {
+      "id": "integer",
+      "assignation_id": "integer",
+      "assignation_silo_id": "integer",
+      "assignation_cost_center_id": "integer",
+      "person_id": "integer",
+      "account_id": "integer",
+      "cycle_id": "integer",
+      "position_id": "integer",
+      "position_silo_id": "integer",
+      "position_cost_center_id": "integer",
+      "real_cost": "integer",
+      "salary": "integer",
+      "cost": "integer",
+      "prorated_cost": "integer",
+      "prorate_days": "integer",
+      "is_billable": "boolean",
+      "employee_role_id": "integer",
+      "notes": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+      "po_number": "string"
+    }
+  },
+  {
+    "entity_name": "employee_positions",
+    "columns": {
+      "id": "integer",
+      "employee_role_id": "integer",
+      "contract_type_id": "integer",
+      "currency": "string",
+      "start_date": "timestamp",
+      "end_date": "timestamp",
+      "salary": "integer",
+      "additional_salary": "integer",
+      "cost": "integer",
+      "bonus": "integer",
+      "is_active": "boolean",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+      "silo_id": "integer",
+      "cost_center_id": "integer",
+      "effective_date": "timestamp",
+      "deleted_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "employee_roles",
+    "columns": {
+      "id": "integer",
+      "person_id": "integer",
+      "role_id": "integer",
+      "seniority_id": "integer",
+      "is_main": "boolean",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "general_seniorities",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+      "order": "integer"
+    }
+  },
+  {
+    "entity_name": "operation_assignations",
+    "columns": {
+      "id": "integer",
+      "account_id": "integer",
+      "operational_profile_id": "integer",
+      "allocation": "integer",
+      "effective_date": "timestamp",
+      "end_date": "timestamp",
+      "notes": "string",
+      "is_billable": "boolean",
+      "monthly_sales_price": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+      "silo_id": "integer",
+      "cost_center_id": "integer",
+      "start_date": "timestamp",
+      "reason_id": "integer",
+      "end_reason_id": "integer",
+      "is_onboarding": "boolean",
+      "is_offboarding": "boolean",
+      "placement_id": "string",
+      "financial_dimension_id": "integer",
+      "payment_in_arrears": "boolean",
+      "po_number": "string",
+      "hourly_sales_price": "integer",
+      "monthly_agreed_hours": "integer"
+    }
+  },
+  {
+    "entity_name": "employee_operational_profiles",
+    "columns": {
+      "id": "integer",
+      "employee_role_id": "integer",
+      "is_certified": "boolean",
+      "is_available": "boolean",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "employee_technologies",
+    "columns": {
+      "id": "integer",
+      "person_id": "integer",
+      "seniority_id": "integer",
+      "technology_id": "integer",
+      "is_principal": "boolean",
+      "is_verified": "boolean",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+      "knowledge_external_id": "integer",
+      "seniority_external_id": "integer"
+    }
+  },
+  {
+    "entity_name": "technologies",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "provider": "string",
+      "role_id": "integer",
+      "language_id": "integer",
+      "category_id": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+      "tech_id": "integer"
+    }
+  },
+  {
+    "entity_name": "general_languages",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "employee_languages",
+    "columns": {
+      "id": "integer",
+      "person_id": "integer",
+      "language_id": "integer",
+      "language_level_id": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "general_language_levels",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "general_hardwares",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "hardware_ref": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "employee_equipments",
+    "columns": {
+      "id": "integer",
+      "person_id": "integer",
+      "hardware_id": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  }
+]
+```
+
+### Lecturas (las 7 queries que reemplaza `GET /employee/details/{id}`)
+
+```sql
+select
+  ep.first_name
+  , ep.last_name
+  , ep.identification_type_id
+  , ep.city_id
+  , ep.identification
+  , ep.photo_url
+  , ep.nationality_id
+  , ep.birth_date
+  , ep.phone_number
+  , ep.personal_email
+  , ep.corporate_email
+  , ep.address
+  , ep.cv_url
+  , gc.country_id
+from employee_persons ep
+left join general_cities gc on
+  ep.city_id = gc.id
+where ep.id = {{ person_id.value }}
+```
+
+```sql
+select
+  er.id employee_role_id
+  , er.role_id
+  , er.seniority_id
+  , er.is_main
+  , eop.id employee_operational_profile_id
+  , eop.is_certified
+  , eop.is_available
+  , max(ep.id)::bool has_active_employee_position
+  , max(oa.id)::bool has_active_employee_assignation
+from employee_roles er
+inner join employee_operational_profiles eop on
+  eop.employee_role_id = er.id
+left join employee_positions ep on
+  ep.employee_role_id = er.id and ep.is_active
+left join operation_assignations oa on
+  oa.operational_profile_id = eop.id and (oa.end_date isnull or oa.end_date > current_date)
+where person_id = {{ person_id.value }}
+group by er.id, eop.id
+```
+
+```sql
+select
+  ep.id employee_position_id
+  , er.role_id
+  , er.seniority_id
+  , ep.is_active
+  , ep.start_date
+  , ep.effective_date
+  , ep.end_date
+  , ep.cost_center_id
+  , ep.silo_id
+  , ep.bonus
+  , ep.salary
+  , ep.cost
+  , ep.currency
+  , ep.employee_role_id
+  , ep.contract_type_id
+  , ep.additional_salary
+  , ep.contract_type_id
+from employee_positions ep
+inner join employee_roles er on
+ep.employee_role_id = er.id
+where
+  er.person_id = {{ person_id.value }}
+order by
+  ep.start_date desc, ep.effective_date desc, ep.end_date desc
+```
+
+```sql
+select
+  oa.id assignation_id
+  , er.role_id
+  , er.seniority_id
+  , oa.account_id
+  , oa.is_billable
+  , oa.is_onboarding
+  , oa.is_offboarding
+  , oa.payment_in_arrears
+  , oa.monthly_sales_price
+  , oa.start_date
+  , oa.effective_date
+  , oa.end_date
+  , oa.cost_center_id
+  , oa.allocation
+  , oa.reason_id
+  , oa.end_reason_id
+  , oa.notes
+  , oa.operational_profile_id
+  , oa.placement_id
+  , oa.financial_dimension_id
+  , oa.po_number
+  , oa.hourly_sales_price
+  , oa.monthly_agreed_hours
+from operation_assignations oa
+inner join employee_operational_profiles eop on
+  oa.operational_profile_id = eop.id
+inner join employee_roles er on
+  eop.employee_role_id = er.id
+where
+  er.person_id = {{ person_id.value }}
+order by
+  oa.start_date desc, oa.effective_date desc
+```
+
+```sql
+select
+  et.id
+  , et.technology_id
+  , et.seniority_id
+  , et.is_principal
+  , et.is_verified
+from employee_technologies et
+where
+  et.person_id = {{ person_id.value }}
+```
+
+```sql
+select
+  el.id
+  , el.language_id
+  , el.language_level_id
+from employee_languages el
+where
+  el.person_id = {{ person_id.value }}
+```
+
+```sql
+select
+  ee.id
+  , ee.hardware_id
+from employee_equipments ee
+where
+  ee.person_id = {{ person_id.value }}
+```
+
+### Escrituras y su endpoint equivalente
+
+| Operación en Retool | Endpoint |
+|---|---|
+| employee_persons: update by id | `PATCH /employee/persons/{id}` |
+| employee_roles: insert one | `POST /employee/roles` |
+| employee_operational_profiles: insert one | `POST /employee/operational-profiles` |
+| employee_operational_profiles: bulk update | `PATCH /employee/operational-profiles/bulk` |
+| employee_positions: insert one | `POST /employee/positions` |
+| employee_positions: update one by id | `PATCH /employee/positions/{id}` |
+| employee_positions: bulk update | `PATCH /employee/positions/bulk` |
+| operation_assignations: bulk update | `PATCH /employee/assignations/bulk` |
+| employee_technologies: insert one | `POST /employee/technologies` |
+| employee_technologies: bulk update | `PATCH /employee/technologies/bulk` |
+| employee_technologies: bulk upsert | `POST /employee/technologies/bulk-upsert` |
+| `delete from employee_technologies where id = ANY(...)` | `DELETE /employee/technologies?ids=...` |
+| employee_languages: insert one | `POST /employee/languages` |
+| employee_languages: bulk update via primary key | `PATCH /employee/languages/bulk` |
+| `delete from employee_languages where id = ...` | `DELETE /employee/languages/{id}` |
+| employee_equipments: insert one | `POST /employee/equipments` |
+| employee_equipments: bulk update | `PATCH /employee/equipments/bulk` |
+| `delete from employee_equipments where id = ...` | `DELETE /employee/equipments/{id}` |
