@@ -13,10 +13,14 @@ class FilterEmployeePerson(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-class EmployeePersonUpdateItem(BaseModel):
-    """PATCH /employee/persons/{id} - replaces the Retool "employee_persons: update by id"
-    write, only the given fields change."""
+# Every write is a bulk upsert: POST /employee/<resource>/bulk-upsert takes a list (one item
+# or many). An item with `id` updates that row (only the fields sent change); an item without
+# `id` creates a row, and must carry the fields named in `required_on_create` at the endpoint
+# (the parent FK). Best-effort: each item runs in its own SAVEPOINT.
 
+
+class EmployeePersonUpsertItem(BaseModel):
+    id: Optional[int] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     identification_type_id: Optional[int] = None
@@ -34,10 +38,9 @@ class EmployeePersonUpdateItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-class EmployeeRoleCreateItem(BaseModel):
-    """POST /employee/roles - "employee_roles: insert one"."""
-
-    person_id: int
+class EmployeeRoleUpsertItem(BaseModel):
+    id: Optional[int] = None
+    person_id: Optional[int] = None
     role_id: Optional[int] = None
     seniority_id: Optional[int] = None
     is_main: Optional[bool] = None
@@ -45,32 +48,18 @@ class EmployeeRoleCreateItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-class EmployeeOperationalProfileCreateItem(BaseModel):
-    """POST /employee/operational-profiles - "employee_operational_profiles: insert one"."""
-
-    employee_role_id: int
+class EmployeeOperationalProfileUpsertItem(BaseModel):
+    id: Optional[int] = None
+    employee_role_id: Optional[int] = None
     is_certified: Optional[bool] = None
     is_available: Optional[bool] = None
 
     model_config = ConfigDict(extra="ignore")
 
 
-class EmployeeOperationalProfileBulkUpdateItem(BaseModel):
-    """One item of PATCH /employee/operational-profiles/bulk - "employee_operational_profiles:
-    bulk update". `id` identifies the row; best-effort per item, same savepoint idiom as
-    every bulk endpoint here (see use_cases.py)."""
-
-    id: int
-    is_certified: Optional[bool] = None
-    is_available: Optional[bool] = None
-
-    model_config = ConfigDict(extra="ignore")
-
-
-class EmployeePositionCreateItem(BaseModel):
-    """POST /employee/positions - "employee_positions: insert one"."""
-
-    employee_role_id: int
+class EmployeePositionUpsertItem(BaseModel):
+    id: Optional[int] = None
+    employee_role_id: Optional[int] = None
     contract_type_id: Optional[int] = None
     currency: Optional[str] = None
     start_date: Optional[date] = None
@@ -87,36 +76,10 @@ class EmployeePositionCreateItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-class EmployeePositionUpdateItem(BaseModel):
-    """PATCH /employee/positions/{id} - "employee_positions: update one by id"."""
-
-    contract_type_id: Optional[int] = None
-    currency: Optional[str] = None
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
-    salary: Optional[Decimal] = None
-    additional_salary: Optional[Decimal] = None
-    cost: Optional[Decimal] = None
-    bonus: Optional[Decimal] = None
-    is_active: Optional[bool] = None
-    silo_id: Optional[int] = None
-    cost_center_id: Optional[int] = None
-    effective_date: Optional[date] = None
-
-    model_config = ConfigDict(extra="ignore")
-
-
-class EmployeePositionBulkUpdateItem(EmployeePositionUpdateItem):
-    """One item of PATCH /employee/positions/bulk - "employee_positions: bulk update"."""
-
-    id: int
-
-
-class OperationAssignationBulkUpdateItem(BaseModel):
-    """One item of PATCH /employee/assignations/bulk - "operation_assignations: bulk
-    update"."""
-
-    id: int
+class OperationAssignationUpsertItem(BaseModel):
+    id: Optional[int] = None
+    operational_profile_id: Optional[int] = None
+    account_id: Optional[int] = None
     allocation: Optional[Decimal] = None
     effective_date: Optional[date] = None
     end_date: Optional[date] = None
@@ -140,39 +103,7 @@ class OperationAssignationBulkUpdateItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-class EmployeeTechnologyCreateItem(BaseModel):
-    """POST /employee/technologies - "employee_technologies: insert one"."""
-
-    person_id: int
-    seniority_id: Optional[int] = None
-    technology_id: Optional[int] = None
-    is_principal: Optional[bool] = None
-    is_verified: Optional[bool] = None
-    knowledge_external_id: Optional[int] = None
-    seniority_external_id: Optional[int] = None
-
-    model_config = ConfigDict(extra="ignore")
-
-
-class EmployeeTechnologyBulkUpdateItem(BaseModel):
-    """One item of PATCH /employee/technologies/bulk - "employee_technologies: bulk
-    update"."""
-
-    id: int
-    seniority_id: Optional[int] = None
-    technology_id: Optional[int] = None
-    is_principal: Optional[bool] = None
-    is_verified: Optional[bool] = None
-    knowledge_external_id: Optional[int] = None
-    seniority_external_id: Optional[int] = None
-
-    model_config = ConfigDict(extra="ignore")
-
-
-class EmployeeTechnologyBulkUpsertItem(BaseModel):
-    """One item of POST /employee/technologies/bulk-upsert - "employee_technologies: bulk
-    upsert". id present -> update; absent -> create (requires person_id)."""
-
+class EmployeeTechnologyUpsertItem(BaseModel):
     id: Optional[int] = None
     person_id: Optional[int] = None
     seniority_id: Optional[int] = None
@@ -185,40 +116,18 @@ class EmployeeTechnologyBulkUpsertItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-class EmployeeLanguageCreateItem(BaseModel):
-    """POST /employee/languages - "employee_languages: insert one"."""
-
-    person_id: int
+class EmployeeLanguageUpsertItem(BaseModel):
+    id: Optional[int] = None
+    person_id: Optional[int] = None
     language_id: Optional[int] = None
     language_level_id: Optional[int] = None
 
     model_config = ConfigDict(extra="ignore")
 
 
-class EmployeeLanguageBulkUpdateItem(BaseModel):
-    """One item of PATCH /employee/languages/bulk - "employee_languages: bulk update via
-    primary key"."""
-
-    id: int
-    language_id: Optional[int] = None
-    language_level_id: Optional[int] = None
-
-    model_config = ConfigDict(extra="ignore")
-
-
-class EmployeeEquipmentCreateItem(BaseModel):
-    """POST /employee/equipments - "employee_equipments: insert one"."""
-
-    person_id: int
-    hardware_id: Optional[int] = None
-
-    model_config = ConfigDict(extra="ignore")
-
-
-class EmployeeEquipmentBulkUpdateItem(BaseModel):
-    """One item of PATCH /employee/equipments/bulk - "employee_equipments: bulk update"."""
-
-    id: int
+class EmployeeEquipmentUpsertItem(BaseModel):
+    id: Optional[int] = None
+    person_id: Optional[int] = None
     hardware_id: Optional[int] = None
 
     model_config = ConfigDict(extra="ignore")

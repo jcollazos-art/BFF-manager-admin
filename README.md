@@ -42,9 +42,10 @@ exercised as they really run.
 
 ## What's implemented vs. what's a placeholder
 
-- `features/employee` is fully implemented: the nested entity view and every write operation
-  listed in the architecture doc's Employee demo (insert one / update one / bulk update / bulk
-  upsert / bulk delete, per sub-entity).
+- `features/employee` is fully implemented: the nested entity view, one
+  `POST /<resource>/bulk-upsert` per sub-entity that creates and/or updates one or many rows
+  (item with `id` -> update, without -> create), and the separate delete endpoints - covering
+  every write listed in the architecture doc's Annex A.
 - No auth feature exists yet - `shared/permissions.py` is a stub showing the intended
   "decorator is sugar over `Depends`" shape (section 6.3 of the doc), not a real permission
   check. Wire a real auth feature in and put `Depends(get_current_user)` on each router the

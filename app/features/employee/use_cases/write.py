@@ -2,61 +2,40 @@
 members are `__init__` and `execute` is a function with extra steps. They turn the validated
 Pydantic items into dicts and delegate to BaseRepository's generic writes - the best-effort
 SAVEPOINT-per-item bulk logic lives there (see app/shared/repository.py), not here.
+
+Creating and updating share one path: `bulk_upsert` (item with `id` -> update, without ->
+create). Deletes stay separate.
 """
 
 from datetime import datetime
-from typing import List, Type
+from typing import List, Sequence, Type
 
 from pydantic import BaseModel
 
-from app.features.employee.models import (
-    EmployeeEquipment,
-    EmployeeLanguage,
-    EmployeePerson,
-    EmployeePosition,
-    EmployeeTechnology,
-)
-from app.features.employee.schemas.request import (
-    EmployeePersonUpdateItem,
-    EmployeePositionUpdateItem,
-    EmployeeTechnologyBulkUpsertItem,
-)
+from app.features.employee.models import EmployeeEquipment, EmployeeLanguage, EmployeeTechnology
 from app.features.employee.repository import EmployeeRepository
 from app.infrastructure.database import Base
 from app.shared.repository import BulkResult
 
 
-def create(repo: EmployeeRepository, model: Type[Base], item: BaseModel) -> Base:
-    """Create endpoints with no rule beyond "insert what was validated": roles, operational
-    profiles, positions, technologies, languages, equipments."""
-    return repo.create(model, item.model_dump(exclude_none=True), datetime.now())
-
-
-def bulk_update_by_id(repo: EmployeeRepository, model: Type[Base], items: List[BaseModel]) -> List[BulkResult]:
-    return repo.update_many(model, [item.model_dump(exclude_none=True) for item in items], datetime.now())
-
-
-def update_person(repo: EmployeeRepository, person_id: int, item: EmployeePersonUpdateItem) -> EmployeePerson:
-    return repo.update_by_id(EmployeePerson, person_id, item.model_dump(exclude_none=True), datetime.now())
-
-
-def update_position(repo: EmployeeRepository, position_id: int, item: EmployeePositionUpdateItem) -> EmployeePosition:
-    return repo.update_by_id(EmployeePosition, position_id, item.model_dump(exclude_none=True), datetime.now())
+def bulk_upsert(
+    repo: EmployeeRepository,
+    model: Type[Base],
+    items: List[BaseModel],
+    required_on_create: Sequence[str] = (),
+) -> List[BulkResult]:
+    return repo.upsert_many(
+        model,
+        [item.model_dump(exclude_none=True) for item in items],
+        datetime.now(),
+        required_on_create=required_on_create,
+    )
 
 
 def bulk_delete_technologies(repo: EmployeeRepository, ids: List[int]) -> int:
     """`delete from employee_technologies where id = ANY(...)` - a single statement, not a
     best-effort batch, same semantics as the original Retool query."""
     return repo.delete_many(EmployeeTechnology, ids)
-
-
-def bulk_upsert_technologies(repo: EmployeeRepository, items: List[EmployeeTechnologyBulkUpsertItem]) -> List[BulkResult]:
-    return repo.upsert_many(
-        EmployeeTechnology,
-        [item.model_dump(exclude_none=True) for item in items],
-        datetime.now(),
-        required_on_create=("person_id",),
-    )
 
 
 def delete_language(repo: EmployeeRepository, language_row_id: int) -> bool:

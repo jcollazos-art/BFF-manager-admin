@@ -56,7 +56,7 @@ app/
     database.py           # engine, SessionLocal, Base (DeclarativeBase), get_db
   shared/
     errors.py             # AppError, NotFoundError, ConflictError, InvalidFieldError, get_or_404
-    responses.py          # Page[T], Envelope[T]
+    responses.py          # Page[T], Envelope[T], BulkResponse
     pagination.py         # pagination_params(), sort_params() - fábricas de Depends
     query_filters.py      # merge_query_filters
     repository.py         # BaseRepository - CRUD genérico + bulk best-effort
@@ -113,10 +113,28 @@ El enfoque es pragmático, no hexagonal estricto. El dominio **son** los modelos
 - Una sola capa de herencia; la base no lleva lógica de negocio.
 
 ### Use cases
-- **Funciones, no clases.** Una clase con solo `__init__` + `execute` es una función con pasos de más. Reciben el repositorio como primer parámetro: `write.update_position(repo, position_id, item)`.
-- Convierten el Pydantic a dict (`model_dump(exclude_none=True)`) y delegan al repositorio. Cuando el caso es genérico, una sola función sirve para varios modelos: `write.create(repo, EmployeeRole, item)`, `write.bulk_update_by_id(repo, EmployeePosition, items)`.
+- **Funciones, no clases.** Una clase con solo `__init__` + `execute` es una función con pasos de más. Reciben el repositorio como primer parámetro: `write.delete_language(repo, language_row_id)`.
+- Convierten el Pydantic a dict (`model_dump(exclude_none=True)`) y delegan al repositorio. Cuando el caso es genérico, una sola función sirve para varios modelos: `write.bulk_upsert(repo, EmployeeRole, items, required_on_create=("person_id",))`.
 - Una clase solo se justifica si guarda estado o tiene varios métodos con lógica real.
 - Si algún día hace falta sustituir el repositorio (otra fuente de datos, un doble de test), se declara un `typing.Protocol` en ese momento, solo para ese caso.
+
+### Endpoints de escritura: un bulk-upsert por entidad
+
+Crear y actualizar es **un solo endpoint por entidad**: `POST /<feature>/<recurso>/bulk-upsert`, que recibe una lista (uno o muchos ítems):
+
+- Ítem **con `id`** → actualiza esa fila. Solo cambian los campos enviados; los `null`/ausentes no se tocan.
+- Ítem **sin `id`** → crea una fila. Debe traer los campos de `required_on_create` del endpoint, normalmente la FK al padre (`person_id`, `employee_role_id`, ...). Si faltan, ese ítem falla con un mensaje claro en lugar de un error de constraint de Postgres.
+- **Best-effort**: cada ítem corre en su propio SAVEPOINT. La respuesta es `BulkResponse` (`shared/responses.py`):
+  ```json
+  {"ok": false, "results": [
+    {"index": 0, "ok": true,  "id": 1318, "error": null},
+    {"index": 1, "ok": false, "id": null, "error": "employee_languages requires person_id to be created"}
+  ]}
+  ```
+  `ok` es `true` solo si todos los ítems salieron bien. El cliente obtiene el `id` de cada fila creada en `results`.
+- **Los deletes van separados** (`DELETE`), no dentro del upsert.
+- No hay endpoints de "crear uno" ni "actualizar uno": crear o actualizar una sola fila es enviar una lista de un ítem.
+- El schema de entrada es uno por entidad (`XUpsertItem`), con `id` y todos los campos opcionales. La regla de qué se necesita para crear vive en `required_on_create`, en el controller.
 
 ### Controllers
 - El repositorio se inyecta con una dependencia de la feature:
@@ -125,7 +143,7 @@ El enfoque es pragmático, no hexagonal estricto. El dominio **son** los modelos
       return EmployeeRepository(db)
   ```
 - **Las rutas estáticas van antes que las rutas con parámetro.** FastAPI evalúa en orden de declaración: si `PATCH /positions/{position_id}` va antes que `PATCH /positions/bulk`, `"bulk"` se captura como `position_id` y responde 422. Este bug existió en `employee`.
-- Toda respuesta declara `response_model` con `Envelope[XOut]` o `Page[XOut]`.
+- Toda respuesta declara `response_model`: `Envelope[XOut]`, `Page[XOut]` o `BulkResponse`.
 
 ### Modelos y tipos
 - **El tipo del modelo debe coincidir con el de la columna real en Postgres**, no con lo que diga otra fuente (Retool, TypeORM). Las columnas `numeric(p,s)` se mapean como `Mapped[Optional[Decimal]] = mapped_column(Numeric)`, entran como `Decimal` en `schemas/request.py` y salen como `float` en `schemas/response.py`, para que el JSON tenga números y no strings. Mapearlas como `int` rompió `GET /details/{id}` con `monthly_sales_price = 6114.78`.
@@ -193,10 +211,10 @@ Lo que no debe variar por endpoint (la forma del error, `Page[T]`) queda fijo a 
 
 1. **Verificar los tipos reales** de las tablas en `information_schema.columns`, sobre todo las columnas `numeric`.
 2. `features/<feature>/models.py`: los modelos del agregado, con `relationship(..., lazy="raise")` dentro del agregado y enteros planos para los ids de catálogos externos.
-3. `features/<feature>/schemas/request.py` y `schemas/response.py`: los `XCreateItem`, `XUpdateItem`, `XBulkUpdateItem` (con `id`) y los `XOut` (`from_attributes=True`).
+3. `features/<feature>/schemas/request.py` y `schemas/response.py`: un `XUpsertItem` por entidad (`id` y todos los campos opcionales) y los `XOut` (`from_attributes=True`).
 4. `features/<feature>/repository.py`: `class XRepository(BaseRepository)`, solo con las consultas propias (listado con filtros y `_SORTABLE_FIELDS`, detalle con `selectinload`).
-5. `features/<feature>/use_cases/query.py` y `write.py`: funciones que reciben `repo`. Para CRUD genérico, se reutiliza el patrón de `employee` (`create`, `bulk_update_by_id`).
-6. `features/<feature>/controller.py`: `router = APIRouter(prefix="/<feature>")`, `get_repository`, rutas estáticas antes que las de parámetro, `response_model` en todo.
+5. `features/<feature>/use_cases/query.py` y `write.py`: funciones que reciben `repo`. Para escrituras, se reutiliza el patrón de `employee` (`bulk_upsert` + deletes).
+6. `features/<feature>/controller.py`: `router = APIRouter(prefix="/<feature>")`, `get_repository`, un `POST /<recurso>/bulk-upsert` por entidad con su `required_on_create`, deletes aparte, rutas estáticas antes que las de parámetro, `response_model` en todo.
 7. Registrarlo en `app/api/v1.py` con `router.include_router(...)`.
 8. Si la feature crea tablas: su migración con el `GRANT` al rol de la app, en el mismo PR (ver sección 8).
 
@@ -205,7 +223,8 @@ Lo que no debe variar por endpoint (la forma del error, `Page[T]`) queda fijo a 
 - **Autenticación**: no existe. `shared/permissions.py` es un stub que lee un header. Antes de exponer el BFF, hay que agregar una feature de auth y poner `dependencies=[Depends(get_current_user)]` en cada router.
 - **Tests**: diferidos a propósito. Cuando se retomen, la idea es usar integración contra un motor real (SQLite en memoria o testcontainer), no Fakes, para que `relationship()`, `selectinload` y los SAVEPOINT se ejecuten como en producción.
 - **Migraciones**: aún no hay Alembic. Regla para cuando se cree cualquier tabla: la migración y el `GRANT` al rol de la app van en el mismo PR. Una tabla que existe en la base sin permisos coordinados es una caída de producción en espera.
-- **Ruta duplicada del detalle**: `GET /employee/details/{id}` (visible en Swagger) y `GET /employee/persons/{id}` (alias oculto con `include_in_schema=False`) apuntan a la misma función. Hay que confirmar cuál consume el frontend y dejar solo una. `/persons/{id}` es la consistente con el resto de rutas.
+- **Ruta del detalle**: hoy es `GET /employee/details/{id}`; el alias `GET /employee/persons/{id}` está comentado en el controller. Falta decidir si se elimina del todo o se vuelve a la forma REST `/persons/{id}`.
+- **Creación de personas y assignations**: el bulk-upsert habilita crear `employee_persons` (requiere `first_name`, `last_name`) y `operation_assignations` (requiere `operational_profile_id`), algo que la ventana de Retool no hacía. Si no se quiere permitir, se agrega una validación que rechace ítems sin `id` en esos dos endpoints.
 - **`shared/projection.py`** (`parse_fields`): portado de `bff-lsg-placement` pero sin usar. Una proyección dinámica de campos choca con un `response_model` fijo; falta decidir si se adopta.
 - **Tablas no modeladas**: `employee_comments`, `employee_person_comments`, `company_tech_partners` y `cost_employee_history` están en la especificación (Anexo A) sin operaciones definidas. Se agregan cuando haya un requerimiento concreto.
 - **Riesgos del ORM**: el N+1 está mitigado por diseño con `lazy="raise"`. Lo que sí exige aprendizaje es entender el *unit of work* y el identity map de la sesión (por qué `flush` no es `commit`, por qué un objeto modificado se persiste sin llamar a `save`).
@@ -612,23 +631,18 @@ where
 
 ### Escrituras y su endpoint equivalente
 
-| Operación en Retool | Endpoint |
+Todas las escrituras de creación/actualización de Retool quedaron cubiertas por un `bulk-upsert` por entidad. Una sola fila se envía como lista de un ítem.
+
+| Operaciones en Retool | Endpoint |
 |---|---|
-| employee_persons: update by id | `PATCH /employee/persons/{id}` |
-| employee_roles: insert one | `POST /employee/roles` |
-| employee_operational_profiles: insert one | `POST /employee/operational-profiles` |
-| employee_operational_profiles: bulk update | `PATCH /employee/operational-profiles/bulk` |
-| employee_positions: insert one | `POST /employee/positions` |
-| employee_positions: update one by id | `PATCH /employee/positions/{id}` |
-| employee_positions: bulk update | `PATCH /employee/positions/bulk` |
-| operation_assignations: bulk update | `PATCH /employee/assignations/bulk` |
-| employee_technologies: insert one | `POST /employee/technologies` |
-| employee_technologies: bulk update | `PATCH /employee/technologies/bulk` |
-| employee_technologies: bulk upsert | `POST /employee/technologies/bulk-upsert` |
+| employee_persons: update by id | `POST /employee/persons/bulk-upsert` |
+| employee_roles: insert one | `POST /employee/roles/bulk-upsert` |
+| employee_operational_profiles: insert one, bulk update | `POST /employee/operational-profiles/bulk-upsert` |
+| employee_positions: insert one, update one by id, bulk update | `POST /employee/positions/bulk-upsert` |
+| operation_assignations: bulk update | `POST /employee/assignations/bulk-upsert` |
+| employee_technologies: insert one, bulk update, bulk upsert | `POST /employee/technologies/bulk-upsert` |
+| employee_languages: insert one, bulk update via primary key | `POST /employee/languages/bulk-upsert` |
+| employee_equipments: insert one, bulk update | `POST /employee/equipments/bulk-upsert` |
 | `delete from employee_technologies where id = ANY(...)` | `DELETE /employee/technologies?ids=...` |
-| employee_languages: insert one | `POST /employee/languages` |
-| employee_languages: bulk update via primary key | `PATCH /employee/languages/bulk` |
 | `delete from employee_languages where id = ...` | `DELETE /employee/languages/{id}` |
-| employee_equipments: insert one | `POST /employee/equipments` |
-| employee_equipments: bulk update | `PATCH /employee/equipments/bulk` |
 | `delete from employee_equipments where id = ...` | `DELETE /employee/equipments/{id}` |
