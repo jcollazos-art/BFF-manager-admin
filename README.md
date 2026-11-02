@@ -11,7 +11,7 @@ In short:
 
 - **Track A** (`app/features/*/models.py`): declarative SQLAlchemy ORM with `relationship()`
   for anything that is "get/edit this entity and its children" - see `features/employee` for
-  the worked example (a single `GET /v1/employee/persons/{id}` replaces 7 separate hand-written
+  the worked example (a single `GET /v1/employee/details/{id}` replaces 7 separate hand-written
   Retool queries via one `selectinload` query).
 - **Track B** (a feature's `reports.py`, none yet in this repo): raw SQL/Core for pivots,
   dashboards, anything that aggregates across many rows - deliberately untouched by Track A.
@@ -35,10 +35,72 @@ Swagger UI: http://127.0.0.1:8000/docs
 
 ## Tests
 
-Not implemented yet - intentionally deferred. When they come back, the plan is integration
-tests against a real engine (in-memory SQLite or a testcontainer) rather than hand-written
-Fakes, so Track A's `relationship()`/`selectinload`/`begin_nested()` (SAVEPOINT) mechanics are
-exercised as they really run.
+Requires **Docker running** (Docker Desktop locally). If it isn't, `pytest` stops with a
+clear message instead of failing every test.
+
+```bash
+pip install -r requirements-dev.txt   # test deps, kept out of the production image
+pytest                                # API tests against a throwaway Postgres 15 (~2s)
+pytest -m drift                       # ORM models vs. the real database in .env (read-only)
+pytest tests/features/employee/test_upsert.py -k decimal   # one file / one test
+```
+
+The first run pulls the `postgres:15-alpine` image, so it takes a bit longer.
+
+### How it works
+
+- **Real database, no mocks.** A disposable Postgres is started once per run and its tables
+  are created from the ORM models. Tests call the real app over HTTP (`client`) and check
+  what ended up in the database (`db`).
+- **Nothing to clean up.** Each test runs inside a transaction that is rolled back at the
+  end, so tests are independent and can run in any order.
+- **Drift test.** Because the test tables come from the models, a model that disagrees with
+  the real schema would go unnoticed. `pytest -m drift` catches that - run it whenever you
+  touch a `models.py`. It is excluded from plain `pytest` because it needs the `.env` DB.
+
+### Layout
+
+```
+tests/
+  conftest.py                 # shared setup (container, rollback, client) - rarely touched
+  test_schema_drift.py        # pytest -m drift
+  shared/                     # pure helpers from app/shared
+  features/<feature>/
+    factories.py              # make_person(db, **overrides) ...
+    test_read.py              # GET endpoints
+    test_upsert.py            # bulk-upsert endpoints
+    test_delete.py            # delete endpoints
+```
+
+### Writing a test
+
+```python
+def test_update_only_changes_the_fields_sent(client, db):
+    person = make_person(db)                                       # 1. arrange with factories
+    language = make_language(db, person, language_id=7, language_level_id=1)
+
+    client.post("/v1/employee/languages/bulk-upsert",              # 2. call the real endpoint
+                json=[{"id": language.id, "language_level_id": 2}])
+
+    db.expunge_all()                                               # 3. read back from the DB,
+    row = db.get(EmployeeLanguage, language.id)                    #    not from session memory
+    assert (row.language_id, row.language_level_id) == (7, 2)
+```
+
+- Test behaviour through the endpoint, not internal functions - use cases and repositories
+  get covered on the way. Unit-test only pure logic (e.g. `shared/query_filters.py`).
+- Build data with factories: only pass the fields the test cares about.
+- Call `db.expunge_all()` before asserting on stored rows, otherwise you may read cached
+  objects instead of what was actually written.
+
+### Adding a feature
+
+1. Import its `models` in `tests/conftest.py` (one line) so its tables get created.
+2. Add `tests/features/<feature>/factories.py` and tests for each endpoint: the happy path,
+   the 404/422 cases, and any rule that lives in the repository or use case.
+3. Run `pytest` and `pytest -m drift`.
+
+More detail in the "Tests" section of the architecture doc.
 
 ## What's implemented vs. what's a placeholder
 

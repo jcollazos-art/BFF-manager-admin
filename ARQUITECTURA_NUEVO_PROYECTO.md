@@ -60,7 +60,7 @@ app/
     pagination.py         # pagination_params(), sort_params() - fábricas de Depends
     query_filters.py      # merge_query_filters
     repository.py         # BaseRepository - CRUD genérico + bulk best-effort
-    projection.py         # parse_fields (portado, aún sin usar - ver sección 8)
+    projection.py         # parse_fields (portado, aún sin usar - ver sección 9)
     permissions.py        # check_permission (stub - no hay auth todavía)
     middleware.py         # RequestTimingMiddleware (log de método, ruta, status, duración)
   features/
@@ -191,7 +191,7 @@ Se usan siempre como `response_model`. Así el contrato queda documentado autom�
 
 ### 6.3 Validación y permisos: `Depends`, no decoradores propios
 
-Un decorador de Python oculta la firma real de la función, y FastAPI necesita esa firma para construir OpenAPI y para la inyección de dependencias. Por eso la validación y los permisos transversales se hacen con `Depends()`. Si se quiere azúcar con forma de decorador (`@requires_permission("x")`), debe ser una envoltura delgada que agregue un `Depends(check_permission("x"))`; la lógica nunca debe vivir en el decorador. `shared/permissions.py` muestra esa forma, pero hoy es un stub (ver sección 8).
+Un decorador de Python oculta la firma real de la función, y FastAPI necesita esa firma para construir OpenAPI y para la inyección de dependencias. Por eso la validación y los permisos transversales se hacen con `Depends()`. Si se quiere azúcar con forma de decorador (`@requires_permission("x")`), debe ser una envoltura delgada que agregue un `Depends(check_permission("x"))`; la lógica nunca debe vivir en el decorador. `shared/permissions.py` muestra esa forma, pero hoy es un stub (ver sección 9).
 
 ### 6.4 Paginación, orden y filtros
 
@@ -207,7 +207,44 @@ Cada feature solo declara su propio `FilterX(BaseModel)`. `merge_query_filters(r
 
 Lo que no debe variar por endpoint (la forma del error, `Page[T]`) queda fijo a propósito. La personalización es para los casos que realmente la necesitan.
 
-## 7. Cómo agregar una feature nueva
+## 7. Tests
+
+**Probar lo que ve el cliente, contra Postgres real.** Los tests llaman a la app por HTTP y verifican en la base de datos. No hay mocks ni Fakes: prueban que el mock funciona, no el sistema, y se desincronizan del código real.
+
+| Tipo | Dónde | Qué cubre |
+|---|---|---|
+| **Tests de API** (la mayoría) | `tests/features/<feature>/test_*.py` | Contrato HTTP: rutas, validación, serialización, upsert, savepoints, 404 |
+| **Drift de schema** | `tests/test_schema_drift.py` | Que cada modelo coincida con la BD real (tipos, columnas, tablas) |
+| Unit tests | `tests/shared/` | Solo funciones con lógica pura (ej. `merge_query_filters`) |
+
+No se escriben tests unitarios de use cases que solo pasan la llamada al repositorio, ni de los repositorios por separado: los tests de API ya los ejecutan de verdad.
+
+```bash
+pip install -r requirements-dev.txt
+pytest            # requiere Docker corriendo
+pytest -m drift   # lee la BD del .env, solo lectura
+```
+
+### Cómo funciona (`tests/conftest.py`)
+
+- **testcontainers** levanta un `postgres:15-alpine` (la misma versión mayor que producción) una vez por corrida, y crea las tablas desde los modelos. Un dev nuevo solo necesita Docker.
+- **Cada test corre dentro de una transacción que se revierte al final.** La sesión usa `join_transaction_mode="create_savepoint"`, así que el `commit()` de `get_db` y los `begin_nested()` del bulk se convierten en SAVEPOINTs dentro de esa transacción. El código se comporta igual que en producción y no queda nada que limpiar.
+- **Fixtures**: `client` (TestClient de la app real) y `db` (la misma sesión que usa el endpoint).
+- Para verificar lo que de verdad quedó guardado: `db.expunge_all()` y volver a cargar la fila. Sin eso, `db.get` puede devolver el objeto en memoria de la sesión.
+
+### Por qué existe el test de drift
+
+El contenedor crea las tablas **desde los modelos**, así que nunca va a detectar un modelo que no coincide con la BD real. Ese fue el bug de `monthly_sales_price` (`Integer` vs `numeric(10,2)`). `pytest -m drift` compara cada columna con la BD del `.env` y lista las diferencias. En su primera ejecución encontró `employee_positions.deleted_at` mapeado como `DateTime` cuando es `DATE`. Se corre siempre que se toque un modelo.
+
+### Datos de prueba: factories
+
+`tests/features/<feature>/factories.py` tiene funciones pequeñas que insertan una fila válida con defaults: `make_person(db, first_name="Ana")`. Cada test pasa solo lo que le importa, así se lee como el escenario que verifica. No se usan librerías como `factory_boy`.
+
+### Una feature nueva
+
+Agrega `tests/features/<feature>/` con su `factories.py` y sus `test_*.py`, e importa sus modelos en `conftest.py` (una línea, para que sus tablas se creen). Nada más del `conftest` cambia. Mínimo a cubrir por feature: el listado (filtros, orden, paginación), el detalle (forma anidada y 404), el upsert (crear + actualizar en la misma llamada, fallo parcial, `required_on_create` por recurso) y los deletes.
+
+## 8. Cómo agregar una feature nueva
 
 1. **Verificar los tipos reales** de las tablas en `information_schema.columns`, sobre todo las columnas `numeric`.
 2. `features/<feature>/models.py`: los modelos del agregado, con `relationship(..., lazy="raise")` dentro del agregado y enteros planos para los ids de catálogos externos.
@@ -216,12 +253,12 @@ Lo que no debe variar por endpoint (la forma del error, `Page[T]`) queda fijo a 
 5. `features/<feature>/use_cases/query.py` y `write.py`: funciones que reciben `repo`. Para escrituras, se reutiliza el patrón de `employee` (`bulk_upsert` + deletes).
 6. `features/<feature>/controller.py`: `router = APIRouter(prefix="/<feature>")`, `get_repository`, un `POST /<recurso>/bulk-upsert` por entidad con su `required_on_create`, deletes aparte, rutas estáticas antes que las de parámetro, `response_model` en todo.
 7. Registrarlo en `app/api/v1.py` con `router.include_router(...)`.
-8. Si la feature crea tablas: su migración con el `GRANT` al rol de la app, en el mismo PR (ver sección 8).
+8. Tests en `tests/features/<feature>/` (ver sección 7) y `pytest -m drift` para validar los modelos.
+9. Si la feature crea tablas: su migración con el `GRANT` al rol de la app, en el mismo PR (ver sección 9).
 
-## 8. Pendientes y decisiones abiertas
+## 9. Pendientes y decisiones abiertas
 
 - **Autenticación**: no existe. `shared/permissions.py` es un stub que lee un header. Antes de exponer el BFF, hay que agregar una feature de auth y poner `dependencies=[Depends(get_current_user)]` en cada router.
-- **Tests**: diferidos a propósito. Cuando se retomen, la idea es usar integración contra un motor real (SQLite en memoria o testcontainer), no Fakes, para que `relationship()`, `selectinload` y los SAVEPOINT se ejecuten como en producción.
 - **Migraciones**: aún no hay Alembic. Regla para cuando se cree cualquier tabla: la migración y el `GRANT` al rol de la app van en el mismo PR. Una tabla que existe en la base sin permisos coordinados es una caída de producción en espera.
 - **Ruta del detalle**: hoy es `GET /employee/details/{id}`; el alias `GET /employee/persons/{id}` está comentado en el controller. Falta decidir si se elimina del todo o se vuelve a la forma REST `/persons/{id}`.
 - **Creación de personas y assignations**: el bulk-upsert habilita crear `employee_persons` (requiere `first_name`, `last_name`) y `operation_assignations` (requiere `operational_profile_id`), algo que la ventana de Retool no hacía. Si no se quiere permitir, se agrega una validación que rechace ítems sin `id` en esos dos endpoints.

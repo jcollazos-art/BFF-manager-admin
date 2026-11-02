@@ -136,7 +136,7 @@ class EmployeePosition(Base):
     silo_id: Mapped[Optional[int]] = mapped_column(Integer)
     cost_center_id: Mapped[Optional[int]] = mapped_column(Integer)
     effective_date: Mapped[Optional[date]] = mapped_column(Date)
-    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    deleted_at: Mapped[Optional[date]] = mapped_column(Date)
 
     role: Mapped["EmployeeRole"] = relationship(back_populates="positions", lazy="raise")
 
