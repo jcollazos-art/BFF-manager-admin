@@ -64,6 +64,13 @@ app/
     permissions.py        # check_permission (stub - no hay auth todavía)
     middleware.py         # RequestTimingMiddleware (log de método, ruta, status, duración)
   features/
+    catalogs/
+      tables.py           # Tables Core de los general_* (generadas del esquema real)
+      registry.py         # CATALOGS: nombre -> tabla + orden + relaciones + filtro fijo
+      repository.py       # CatalogRepository(BaseRepository) - consulta genérica
+      use_cases/query.py  # get_catalogs: batch best-effort + expansión de relaciones
+      schemas/            # CatalogBatchRequest / CatalogBatchResponse
+      controller.py       # POST /catalogs
     employee/
       models.py           # modelos ORM del agregado (todas sus tablas en un módulo)
       repository.py       # EmployeeRepository(BaseRepository) - solo consultas propias
@@ -148,11 +155,46 @@ Crear y actualizar es **un solo endpoint por entidad**: `POST /<feature>/<recurs
 ### Modelos y tipos
 - **El tipo del modelo debe coincidir con el de la columna real en Postgres**, no con lo que diga otra fuente (Retool, TypeORM). Las columnas `numeric(p,s)` se mapean como `Mapped[Optional[Decimal]] = mapped_column(Numeric)`, entran como `Decimal` en `schemas/request.py` y salen como `float` en `schemas/response.py`, para que el JSON tenga números y no strings. Mapearlas como `int` rompió `GET /details/{id}` con `monthly_sales_price = 6114.78`.
   - Para verificar tipos: `select column_name, data_type, numeric_precision, numeric_scale from information_schema.columns where table_name = '...'`.
-- **Los ids de catálogos de otros sistemas** (`role_id`, `seniority_id`, `technology_id`, `silo_id`, `cost_center_id`, etc.) son enteros planos, sin FK ni `relationship()`. Resolver sus nombres le corresponde a la feature dueña del catálogo.
+- **Los ids de catálogos** (`role_id`, `seniority_id`, `technology_id`, `silo_id`, `cost_center_id`, etc.) son enteros planos, sin FK ni `relationship()`. El frontend resuelve sus nombres con `POST /catalogs`.
 - Solo las relaciones **dentro del agregado** se declaran como `ForeignKey` + `relationship()`.
 
+### Catálogos: un solo endpoint para todos (`POST /catalogs`)
+
+Las tablas `general_*` se leen todas con el mismo código, sin un endpoint ni una query por catálogo. Una sola llamada trae varios catálogos sobre la misma conexión:
+
+```json
+POST /v1/catalogs
+{"requests": [
+  {"catalog": "seniorities"},
+  {"catalog": "languages", "per_page": 500},
+  {"catalog": "cities", "filters": {"country_id": 37}, "relations": "country"},
+  {"catalog": "silos", "alias": "top_silos", "filters": {"report_to_silo_id": null}, "sort": "name", "direction": "desc"}
+]}
+```
+
+| Campo | Default | Notas |
+|---|---|---|
+| `catalog` | — | Nombre de la tabla sin `general_` (`general_cities` → `cities`) |
+| `alias` | `catalog` | Clave en la respuesta; sirve para pedir el mismo catálogo dos veces |
+| `filters` | `{}` | Columna → valor. `null` → `IS NULL`, lista → `IN`, texto en columna de texto → contiene (sin distinguir mayúsculas), otro → igual |
+| `page` / `per_page` | `1` / `20` | `per_page` máximo 500 |
+| `sort` / `direction` | orden propio del catálogo / `asc` | Por defecto `order`, si no `name`, si no `id`; siempre desempata por `id` |
+| `relations` | — | FKs a expandir, separadas por coma; anidadas con punto: `"report_to_silo.report_to_silo"` |
+
+Respuesta: `{"ok": bool, "results": {"<alias o catalog>": {"ok", "data", "total", "page", "per_page"} | {"ok": false, "error"}}}`. Es **best-effort**: un catálogo inexistente, una columna o relación desconocida o un error de base de datos fallan solo esa entrada; el resto del batch responde normal (cada entrada corre en su SAVEPOINT).
+
+**Personalizar un catálogo** se hace en `_CUSTOM` de `catalogs/registry.py`, sin tocar el endpoint:
+- `relations`: la base de datos no declara FKs, así que las relaciones se listan a mano: `"cities": dict(relations={"country": Relation("countries", "country_id")})`. Se cargan con un `WHERE id IN (...)` por relación, como `selectinload`.
+- `default_sort`: cambia el orden por defecto.
+- `where`: condición fija; por ejemplo `metrics` oculta las filas con `deleted_at`.
+
+Si `registry.py` referencia un catálogo o columna que no existe, la app falla al arrancar, no en la primera request.
+
+**Agregar un catálogo** = agregar su tabla en `catalogs/tables.py` con el tipo real de cada columna (`information_schema`), y correr `pytest -m drift`.
+
 ### Cross-feature
-- Cuando exista una segunda feature, la única frontera entre features será un `services.py` en la feature dueña. Una feature nunca importa el repositorio ni los modelos de otra.
+- La única frontera entre features es un `services.py` en la feature dueña. Una feature nunca importa el repositorio ni los modelos de otra.
+- Excepción: las `Table` de `catalogs/tables.py` son compartidas. Si una feature necesita un catálogo como entidad ORM (p. ej. para eager-load), lo mapea sobre la misma tabla en vez de redefinirla: `class GeneralCity(Base): __table__ = general_cities` (ver `employee/models.py`).
 
 ## 6. Estandarización transversal (`shared/`)
 
@@ -264,6 +306,12 @@ Agrega `tests/features/<feature>/` con su `factories.py` y sus `test_*.py`, e im
 - **Creación de personas y assignations**: el bulk-upsert habilita crear `employee_persons` (requiere `first_name`, `last_name`) y `operation_assignations` (requiere `operational_profile_id`), algo que la ventana de Retool no hacía. Si no se quiere permitir, se agrega una validación que rechace ítems sin `id` en esos dos endpoints.
 - **`shared/projection.py`** (`parse_fields`): portado de `bff-lsg-placement` pero sin usar. Una proyección dinámica de campos choca con un `response_model` fijo; falta decidir si se adopta.
 - **Tablas no modeladas**: `employee_comments`, `employee_person_comments`, `company_tech_partners` y `cost_employee_history` están en la especificación (Anexo A) sin operaciones definidas. Se agregan cuando haya un requerimiento concreto.
+- **Catálogos**:
+  - `general_action_plan_statuses` (Anexo B) no existe en la base de datos; ¿es `general_action_statuses`? Hasta confirmarlo no se expone ninguna de las dos.
+  - `general_silo` del Anexo B es `general_silos` en la base de datos; se expone como `silos`.
+  - Existen en la base pero no están en el Anexo B, así que no se exponen: `general_action_statuses`, `general_companies`, `general_cycles`, `general_financial_dimensions`, `general_resource_release_autonomy`, `general_status`.
+  - Solo lectura por ahora. Las escrituras serían un `POST /catalogs/{catalog}/bulk-upsert` sobre el mismo registro.
+  - No se puede filtrar por columnas de una relación (`"country.name": "..."`), como sí permitía placement; se agrega si aparece el caso.
 - **Riesgos del ORM**: el N+1 está mitigado por diseño con `lazy="raise"`. Lo que sí exige aprendizaje es entender el *unit of work* y el identity map de la sesión (por qué `flush` no es `commit`, por qué un objeto modificado se persiste sin llamar a `save`).
 
 ---
@@ -683,3 +731,992 @@ Todas las escrituras de creación/actualización de Retool quedaron cubiertas po
 | `delete from employee_technologies where id = ANY(...)` | `DELETE /employee/technologies?ids=...` |
 | `delete from employee_languages where id = ...` | `DELETE /employee/languages/{id}` |
 | `delete from employee_equipments where id = ...` | `DELETE /employee/equipments/{id}` |
+
+## Anexo B — Catálogos (`general_*`)
+
+Lista de origen de los catálogos que expone `POST /catalogs`. Igual que en el Anexo A, **los tipos no son confiables**: `catalogs/tables.py` se generó desde `information_schema` (p. ej. `estimated_time` es `double precision`, no `integer`; `general_overtime_types.days` es un arreglo de texto).
+
+```json
+{
+    "entity_name": "general_seniorities",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+      "order": "integer"
+    }
+  },
+  {
+    "entity_name": "general_languages",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+    {
+    "entity_name": "general_language_levels",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "general_hardwares",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "hardware_ref": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+
+  {
+    "entity_name": "general_absent_status",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "general_absent_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+  {
+    "entity_name": "general_account_activities",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+    {
+    "entity_name": "general_account_activity_processes",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "estimated_time": "integer",
+      "is_active": "boolean",
+      "code": "string",
+      "rule_code": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  },
+   {
+    "entity_name": "general_account_categories",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+      "type": "string",
+    }
+  },
+    {
+    "entity_name": "general_account_phases",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "account_type_id": "integer",
+      "account_status_id": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+    {
+    "entity_name": "general_account_statuses",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+      {
+    "entity_name": "general_account_training_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+        {
+    "entity_name": "general_account_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+          {
+    "entity_name": "general_action_plan_responsibles",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_action_plan_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_action_plan_statuses",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_actions",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "type": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_attachment_subtype",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "type_id": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+    {
+    "entity_name": "general_attachment_type",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_augmented_services",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_bill_account_statuses",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_business_review_topics",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "is_system": "boolean",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_ceremonies",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_cities",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "country_id": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_client_coverage_status",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_color_disc",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+    }
+  },
+  {
+    "entity_name": "general_competences",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "type": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_contract_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "is_active": "boolean",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_cost_centers",
+    "columns": {
+      "id": "integer",
+      "profit_loss_id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_countries",
+    "columns": {
+      "id": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_document_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_equipments",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_exception_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_exceptions",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "additional_charges": "string",
+      "subtract_charges": "string",
+      "exception_type_id": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_financial_dimension_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "level": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_flags",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "order": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_frequencies",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_governance_categories",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_governance_concept_type_values",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "concept_type_id": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_governance_concept_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "is_value": "boolean",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_governance_concepts",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "affect_billing": "boolean",
+      "customer_visibility": "boolean",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+      "category_id": "integer",
+      "concept_type_id": "integer",
+      "default_value": "string",
+    }
+  },
+  {
+    "entity_name": "general_hardwares",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "hardware_ref": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_holidays",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "holiday_date": "timestamp",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+      "country_code": "string",
+      "last_updated_by": "string",
+    }
+  },
+  {
+    "entity_name": "general_improvement_request_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_industries",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_issue_categories",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_issue_statuses",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_language_levels",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_languages",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_learning_platforms",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_manager_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_metrics",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+      "deleted_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_newsletters",
+    "columns": {
+      "id": "integer",
+      "content": "string",
+      "url_link": "string",
+      "category": "string",
+      "retool_user": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_offer_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_origins",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "type": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_outcome_reporters",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_overtime_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "days": "string",// TODO
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_payment_platform",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_payroll_novelties",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+      "payroll_novelty_type_id": "integer",
+      "is_deprecated": "boolean",
+    }
+  },
+  {
+    "entity_name": "general_payroll_novelty_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_placement_status",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_pmb_concept",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_poc_positions",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_priorities",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "type": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_profit_and_loss",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_reasons",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "type": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_recurrences",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_related_exception_and_payroll_novelty",
+    "columns": {
+      "id": "integer",
+      "exception_id": "integer",
+      "payroll_novelty_id": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_replacing_options",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "type": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_resource_release_improvement",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_resource_release_strength",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_retention_responsibles",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_retention_statuses",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_review_sources",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "type": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_risk_statuses",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "color": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_roles",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_salary_request_change_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_salary_request_decision_makers",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "is_active": "boolean",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_salary_request_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_seniorities",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "order": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_silo_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_silo",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "report_to_silo_id": "integer",
+      "silo_type_id": "integer",
+      "manager_id": "integer",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_sub_account_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_technologies",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_technology_categories",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_technology_languages",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_tps",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_training_analysis_classification",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_training_attempt_link",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_training_decisions",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_training_open_positions",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_training_source",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_training_status",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_training_workflows",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_warrior_types",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  {
+    "entity_name": "general_work_modalities",
+    "columns": {
+      "id": "integer",
+      "name": "string",
+      "description": "string",
+      "created_at": "timestamp",
+      "updated_at": "timestamp",
+    }
+  },
+  ```
+
+  //general_companies
+  //general_cycles
+  //general_financial_dimensions

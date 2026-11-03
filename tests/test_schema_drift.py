@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric, String, inspect
 from sqlalchemy.exc import OperationalError
 
+import app.features.catalogs.tables  # noqa: F401 - registers the tables on Base.metadata
 import app.features.employee.models  # noqa: F401 - registers the tables on Base.metadata
 from app.infrastructure.database import Base, engine
 
@@ -41,12 +42,18 @@ def test_models_match_the_real_database():
     except OperationalError as exc:
         pytest.skip(f"real database not reachable: {exc.orig}")
 
+    # One round trip for every table's columns - per-table calls take minutes over the network.
+    real_tables = {
+        table_name: {column["name"]: column["type"] for column in columns}
+        for (_, table_name), columns in inspector.get_multi_columns().items()
+    }
+
     problems = []
     for table in Base.metadata.sorted_tables:
-        if not inspector.has_table(table.name):
+        if table.name not in real_tables:
             problems.append(f"{table.name}: table does not exist")
             continue
-        real_columns = {column["name"]: column["type"] for column in inspector.get_columns(table.name)}
+        real_columns = real_tables[table.name]
         for column in table.columns:
             if column.name not in real_columns:
                 problems.append(f"{table.name}.{column.name}: column does not exist")

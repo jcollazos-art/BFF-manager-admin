@@ -22,6 +22,7 @@ from typing import List, Optional
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, foreign, mapped_column, relationship
 
+from app.features.catalogs.tables import general_cities
 from app.infrastructure.database import Base
 
 
@@ -61,10 +62,9 @@ class EmployeePerson(Base):
 
 
 class GeneralCity(Base):
-    __tablename__ = "general_cities"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    country_id: Mapped[Optional[int]] = mapped_column(Integer)
+    # The table is owned by the catalogs feature; mapped here only so the person's country
+    # can be eager-loaded through `city`.
+    __table__ = general_cities
 
 
 class EmployeeRole(Base):

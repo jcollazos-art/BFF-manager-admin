@@ -116,7 +116,19 @@ More detail in the "Tests" section of the architecture doc.
   `cost_employee_history` were in the schema data but had no read/write operation specified for
   them - left out rather than guessed at. Add them the same way as the rest once there's a
   concrete requirement.
-- Catalog/lookup tables referenced by id only (`general_seniorities`, `general_languages`,
-  `general_language_levels`, `general_hardwares`, `technologies`, `general_cities`, roles) are
-  not modeled here - same convention as bff-lsg-placement's cross-feature catalog ids (plain
-  int column, no FK/relationship, resolved by whichever feature owns that catalog).
+- `features/catalogs` serves every `general_*` catalog (read-only for now) through a single
+  `POST /v1/catalogs` that loads several catalogs at once, each one with its own filters,
+  page/per_page (default 20), sort and relations - same idea as bff-lsg-placement's
+  `/catalogs/batch`:
+
+  ```json
+  {"requests": [
+    {"catalog": "seniorities"},
+    {"catalog": "cities", "filters": {"country_id": 37}, "relations": "country"},
+    {"catalog": "silos", "per_page": 500, "relations": "silo_type,report_to_silo"}
+  ]}
+  ```
+
+  Adding a catalog is adding its table to `catalogs/tables.py`; relations, default sort or a
+  fixed filter for one catalog go in `catalogs/registry.py`. Full reference: "Catálogos" in
+  section 5 of the architecture doc. Other features keep catalog ids as plain int columns.
