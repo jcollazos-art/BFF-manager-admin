@@ -1773,6 +1773,444 @@ Lista de origen de los catálogos que expone `POST /catalogs`. Igual que en el A
   },
   ```
 
+  ```sql
+ SELECT DISTINCT ON (ca.name) ca.name "account", grs.name "status", grs.color
+FROM pcu_responses pcu
+LEFT JOIN general_risk_statuses grs ON pcu.risk_status_id = grs.id
+LEFT JOIN operation_assignations oa ON pcu.assignation_id = oa.id
+LEFT JOIN company_accounts ca ON oa.account_id = ca.id
+LEFT JOIN employee_operational_profiles eop ON oa.operational_profile_id = eop.id
+LEFT JOIN employee_roles er ON eop.employee_role_id = er.id
+WHERE er.person_id = {{ +person_id.value }}
+ORDER BY ca.name, pcu.created_at DESC
+```
+
+```sql
+
+```
+
+```sql
+select id, name, "order" from general_seniorities
+```
+
+
+```sql
+with tech AS (
+	SELECT ep.id, string_agg(t.name, ', ') as tech_stack
+  	FROM employee_persons AS ep  
+  	LEFT JOIN employee_technologies AS et on ep.id = et.person_id
+  	LEFT JOIN technologies AS t ON et.technology_id = t.id 
+  	GROUP BY ep.id
+),
+main_tech AS (
+	SELECT ep.id, t.name AS main_tech
+	FROM employee_persons AS ep  
+	LEFT JOIN employee_technologies AS et on ep.id = et.person_id
+	LEFT JOIN technologies AS t ON et.technology_id = t.id 
+	WHERE et.is_principal
+),
+langs AS (SELECT ep.id, string_agg(gl.name, ', ') as language_stack
+   FROM employee_persons AS ep  
+   LEFT JOIN employee_languages AS el on ep.id = el.person_id 
+   LEFT JOIN general_languages AS gl on el.language_id = gl.id
+   GROUP BY ep.id
+),
+employee AS (
+	select er.id as role_id
+		,concat_ws(' ', ep.first_name, ep.last_name) as fullname
+        ,ep.first_name
+        ,ep.last_name
+		,ep.id as employee_id
+	    ,ep.personal_email
+		,ep.corporate_email as email
+		,ep.phone_number
+	    ,ep.photo_url
+	    ,ep.address
+	    ,ep.identification
+	    ,ep.birth_date 
+	    ,gc.name as city
+	    ,gco.name as country
+	    ,gna.name as nacionality
+	    ,gdt.name as identification_type 
+		,gs.name as seniority
+		,gr.name as role
+		,tech.tech_stack
+		,main_tech.main_tech
+		,langs.language_stack
+	from employee_persons ep 
+	inner join employee_roles er on ep.id = er.person_id
+	inner join general_roles gr on er.role_id = gr.id
+	inner join general_seniorities gs on er.seniority_id = gs.id
+	left join general_cities gc ON ep.city_id = gc.id
+	left join general_countries gco on gc.country_id = gco.id
+	left join general_countries gna on ep.nationality_id = gna.id
+	left join general_document_types gdt on ep.identification_type_id = gdt.id
+	left join tech on ep.id = tech.id
+    left join main_tech on ep.id = main_tech.id
+    left join langs on ep.id = langs.id
+	where ep.id = {{ EMPLOYEE.value.person_id }}
+)
+select *
+from employee;
+```
+
+
+```sql
+with
+positions as (
+	select ep.id as employee_id
+		,epos.id as position_id
+		,epos.cost
+        ,epos.salary
+		,er.id as role_id
+		,epos.start_date
+		,epos.effective_date
+		,epos.end_date
+		,epos.contract_type_id
+		,(case when epos.end_date is null then true else false end) as is_active
+	from employee_persons ep 
+	inner join employee_roles er on ep.id = er.person_id
+	inner join employee_positions epos on er.id = epos.employee_role_id
+    where epos.deleted_at is null and
+          ep.id = {{ EMPLOYEE.value.person_id }}
+),
+  assignations as (
+	select oa.id as assignation_id
+		,ca.name as account
+        ,ca.account_type_id
+		,ca.manager_id
+		,gat.name as account_type
+		,ca.billing_cycle
+		,oa.account_id
+		,oa.monthly_sales_price * oa.allocation as sales_price
+		,er.id as role_id
+		,ep.id as employee_id
+		,gs.name as seniority
+		,gr.name as role
+		,oa.is_billable
+        ,oa.cost_center_id
+		,oa.allocation
+		,oa.start_date
+		,oa.effective_date
+		,oa.end_date
+		,oa.monthly_sales_price
+        ,oa.po_number
+		,gcc.name as cost_center
+		,gpal.name as p_l_category
+		,gsi.name silo_name
+        ,ca.manager_id
+        ,concat_ws(' ', ep_manager.first_name, ep_manager.last_name) "manager"
+        , gfd.name financial_dimension
+	from employee_persons ep 
+	inner join employee_roles er on ep.id = er.person_id
+	inner join general_roles gr on er.role_id = gr.id
+	inner join general_seniorities gs on er.seniority_id = gs.id 
+	inner join employee_operational_profiles eop on er.id = eop.employee_role_id 
+	inner join operation_assignations oa on oa.operational_profile_id = eop.id
+	inner join company_accounts ca on oa.account_id = ca.id
+	inner join general_account_types gat on ca.account_type_id = gat.id
+	inner join general_cost_centers gcc on oa.cost_center_id = gcc.id
+	inner join general_profit_and_loss gpal on gcc.profit_loss_id = gpal.id
+    left join general_silos gsi on oa.silo_id = gsi.id
+    left join employee_operational_profiles eop_manager ON ca.manager_id = eop_manager.id
+    left join employee_roles er_manager ON eop_manager.employee_role_id = er_manager.id
+    left join employee_persons ep_manager ON er_manager.person_id = ep_manager.id
+    left join general_financial_dimensions gfd on oa.financial_dimension_id = gfd.id
+    where ep.id = {{ EMPLOYEE.value.person_id }}
+),
+posi_assig as (
+	select a.*
+		,p.position_id
+        ,p.salary
+		,p.cost as employee_cost
+		,p.is_active
+		,p.end_date as position_end_date
+	from assignations a 
+	inner join positions p on p.employee_id = a.employee_id
+    where (
+    		p.effective_date <= a.effective_date and 
+    		a.effective_date <= p.end_date and
+    		(a.end_date is null OR p.end_date <= a.end_date)
+    )
+    	OR (
+    		a.effective_date <= p.effective_date and
+    		p.effective_date <= a.end_date and 
+    		(p.end_date is null OR p.end_date <= a.end_date)
+    )   OR (
+    		a.effective_date <= p.effective_date and
+    		p.effective_date <= a.end_date and 
+    		(p.end_date is null OR p.end_date >= a.end_date)
+    )	OR (
+    		p.effective_date <= a.effective_date and 
+    		(p.end_date is null or p.end_date >= a.end_date)
+    )	OR (
+    	a.effective_date <= p.effective_date and
+    	(a.end_date is null OR p.end_date <= a.end_date)
+    )
+)
+select *,
+  (case when (is_billable and sales_price > 0)
+	then (sales_price - employee_cost) / sales_price else 0 end) as margin
+from posi_assig
+order by posi_assig.is_active desc, start_date desc, effective_date desc
+```
+
+
+```sql
+select rew.id, gwt."name" as ew_status, rew.created_at as last_evaluation_date
+from employee_persons ep
+inner join employee_roles er on ep.id = er.person_id
+inner join employee_positions epos on er.id = epos.employee_role_id
+inner join report_employee_warrior rew on epos.id = rew.employee_position_id
+inner join general_warrior_types gwt on gwt.id = rew.warrior_type_id
+where ep.id = {{ EMPLOYEE.value.person_id }}
+```
+
+
+```sql
+select ep.id as person_id
+    , gl."name" as language
+    , gll."name" as level
+    , el.created_at as last_evaluation_date
+from employee_persons ep
+inner join employee_languages el on el.person_id = ep.id
+inner join general_languages gl on gl.id = el.language_id 
+inner join general_language_levels gll on el.language_level_id = gll.id 
+where el.language_level_id = 3 -- english
+  and ep.id = {{ EMPLOYEE.value.person_id }}
+```
+
+```sql
+with exp_employee_accounts as (
+	select MAX(exp_emp.lt_exp_tech_in_days) as exp_in_days
+		, exp_emp.person_id
+		, exp_emp.account_id
+		, MAX(exp_emp.account) as account
+		, exp_emp.technology_id
+		, MAX(exp_emp.technology) as technology
+	from (
+		select ep.id as person_id
+			, (oa.account_id) as account_id
+			, (ca."name") as account
+			, abs(extract(
+				day from (oa.start_date)::timestamp 
+				- 
+				(case when (oa.end_date) is null
+				then CURRENT_DATE::timestamp
+				else (oa.end_date)::timestamp end)
+			)) as lt_exp_tech_in_days
+			, (oa.start_date) as start_date
+			, (oa.end_date) as end_date 
+			, (ta.technology_id) as technology_id
+			, (t."name") as technology
+		from employee_persons ep 
+		inner join employee_roles er on ep.id = er.person_id
+		inner join employee_operational_profiles eop on er.id = eop.employee_role_id
+		inner join operation_assignations oa ON eop.id = oa.operational_profile_id
+		inner join company_accounts ca on oa.account_id = ca.id
+		inner join technology_accounts ta on oa.account_id = ta.account_id
+		inner join technologies t on t.id = ta.technology_id
+		where ep.id = {{ EMPLOYEE.value.person_id }}
+	) as exp_emp
+	group by exp_emp.account_id, exp_emp.person_id, exp_emp.technology_id
+),
+employee_tech as (
+	select ep.id
+		, t.id as technology_id
+		, t."name" as technology
+		, gtc."name" as type
+		, gs."name" as seniority
+		, exp_ea.exp_in_days
+		, TRUNC((coalesce(exp_in_days, 0) / 365),1) as "exp_in_year"
+		, exp_ea.account_id
+		, exp_ea.account
+	from employee_persons ep 
+	inner join employee_roles er on ep.id = er.person_id
+	inner join employee_technologies et on ep.id = et.person_id
+	inner join general_seniorities gs on et.seniority_id = gs.id
+	inner join technologies t on et.technology_id = t.id
+	inner join general_technology_categories gtc on gtc.id = t.category_id
+	left join exp_employee_accounts exp_ea on exp_ea.person_id = ep.id
+		and exp_ea.technology_id = t.id
+	where ep.id = {{ EMPLOYEE.value.person_id }}
+)
+select *
+from employee_tech
+```
+
+```sql
+select
+  array_agg(distinct oa.account_id) account_ids
+from operation_assignations oa 
+inner join employee_operational_profiles eop on 
+  oa.operational_profile_id = eop.id
+  and (oa.end_date isnull or oa.end_date >= current_date)
+inner join employee_roles er on 
+  eop.employee_role_id = er.id
+  and er.person_id = {{ person_id.value  }}
+
+```
+
+```sql
+SELECT er.role_id
+ , gs.name as seniority
+ , gr.name AS role
+ , er.is_main
+ , eop.is_certified
+ , eop.is_available
+from employee_persons as e
+inner join employee_roles as er on er.person_id = e.id
+inner join employee_operational_profiles as eop on eop.employee_role_id = er.id
+inner join general_seniorities gs on er.seniority_id = gs.id 
+inner join general_roles as gr on er.role_id = gr.id
+where e.id = {{ EMPLOYEE.value.person_id }}
+```
+
+```sql
+SELECT ep.id
+     , ep.contract_type_id
+     , ep.currency
+     , ep.start_date
+     , ep.effective_date
+     , ep.end_date
+     , ep.salary
+     , ep.additional_salary
+     , ep.is_active
+     , ep.cost     
+     , ep.bonus
+     , ep.silo_id
+     , ep.cost_center_id
+     , gr.name employee_role
+     , ct.name contract_type
+     , cc.name cost_center
+     , gs.name seniority
+     , si.name silo
+FROM employee_positions AS ep
+LEFT JOIN employee_roles AS er ON ep.employee_role_id = er.id
+LEFT JOIN general_roles AS gr ON er.role_id = gr.id
+LEFT JOIN general_contract_types AS ct ON ep.contract_type_id = ct.id
+LEFT JOIN general_cost_centers AS cc ON ep.cost_center_id = cc.id
+LEFT JOIN general_seniorities AS gs ON er.seniority_id = gs.id
+LEFT JOIN general_silos AS si ON ep.silo_id = si.id
+WHERE er.person_id = {{ EMPLOYEE.value.person_id }}
+order by ep.is_active DESC, ep.id DESC 
+```
+
+```sql
+select MAX(gs."name") as seniority,
+	MAX(gs.order) as score,
+	gr.name as "role_name"
+from employee_technologies et
+inner join general_seniorities gs on et.seniority_id = gs.id
+inner join technologies t on et.technology_id = t.id
+inner join general_roles gr on t.role_id = gr.id
+where et.person_id = {{ EMPLOYEE.value.person_id }}
+group by gr.name
+```
+
+```sql
+select gs."name" as seniority,
+	gs.order as score,
+	t."name" as tech,
+	gr.name as "role_name"
+from employee_technologies et
+inner join general_seniorities gs on et.seniority_id = gs.id
+inner join technologies t on et.technology_id = t.id
+inner join general_roles gr on t.role_id = gr.id
+where et.person_id = {{ EMPLOYEE.value.person_id }}
+and ({{graph_seniority_roles.selectedPoints.length == 0}} or
+  gr.name ILIKE {{'%' + graph_seniority_roles.selectedPoints[0]?.x + '%'}})
+```
+
+- actions
+
+
+```sql
+select gs."name" as seniority,
+	gs.order as score,
+	et.knowledge_external_id
+from employee_technologies et
+inner join general_seniorities gs on et.seniority_external_id = gs.id
+where et.person_id = {{ EMPLOYEE.value.person_id }}
+```
+
+```sql
+SELECT id, name, start_date, end_date FROM general_cycles
+```
+
+```sql
+SELECT id, name FROM general_exceptions
+```
+
+```sql
+SELECT id, name FROM general_reasons
+```
+
+```sql
+ SELECT
+     be.id
+   , concat_ws(' ', ep.first_name, ep.last_name) "name"
+   , be.exception_id
+   , ge.name "exception"
+   , be.cycle_id
+   , gc."start_date"::date "cycle"
+   , be.account_id
+   , ca."name" "account"
+   , be.reason_id
+   , gr.name "reason"
+   , be.start_date
+   , be.end_date
+   , be.value
+   , be.transactional_fee
+   , be.approved_by
+   , be.is_billed
+   , be.notes
+   , be.assignation_id
+FROM bill_exceptions be
+LEFT JOIN operation_assignations oa ON oa.id = be.assignation_id
+LEFT JOIN employee_operational_profiles eop ON eop.id = oa.operational_profile_id
+LEFT JOIN employee_roles er ON er.id = eop.employee_role_id
+LEFT JOIN employee_persons ep ON ep.id = er.person_id
+LEFT JOIN general_exceptions ge ON ge.id = be.exception_id
+LEFT JOIN general_cycles gc ON gc.id = be.cycle_id
+LEFT JOIN company_accounts ca ON ca.id = be.account_id
+LEFT JOIN general_reasons gr ON gr.id = be.reason_id
+WHERE ep.id = {{ EMPLOYEE.value.person_id }}
+```
+
+```sql
+ SELECT * FROM general_companies
+```
+
+```sql
+ SELECT 
+  emp_actions.id, 
+  emp_actions.action_id,
+  g_action.name AS action_name,
+  emp_actions.description,
+  emp_actions.start_date, 
+  emp_actions.end_date,
+  emp_actions.action_status_id,
+  g_action_status.name AS action_status_name,
+  emp_actions.is_completed
+FROM employee_actions AS emp_actions
+LEFT JOIN general_actions AS g_action ON 
+  emp_actions.action_id = g_action.id
+LEFT JOIN general_action_statuses AS g_action_status ON
+  emp_actions.action_status_id = g_action_status.id
+WHERE person_id = {{ EMPLOYEE.value.person_id }} 
+```
+
+```sql
+ SELECT id, name FROM company_accounts
+```
+
+```sql
+ SELECT id, comment, retool_user, created_at FROM employee_comments
+WHERE person_id = {{ EMPLOYEE.value.person_id }}
+
+```
+
   //general_companies
   //general_cycles
   //general_financial_dimensions

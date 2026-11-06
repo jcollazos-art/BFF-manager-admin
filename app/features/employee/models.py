@@ -19,7 +19,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Table
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, foreign, mapped_column, relationship
 
 from app.features.catalogs.tables import general_cities
@@ -55,6 +56,8 @@ class EmployeePerson(Base):
     technologies: Mapped[List["EmployeeTechnology"]] = relationship(back_populates="person", lazy="raise")
     languages: Mapped[List["EmployeeLanguage"]] = relationship(back_populates="person", lazy="raise")
     equipments: Mapped[List["EmployeeEquipment"]] = relationship(back_populates="person", lazy="raise")
+    actions: Mapped[List["EmployeeAction"]] = relationship(back_populates="person", lazy="raise")
+    comments: Mapped[List["EmployeeComment"]] = relationship(back_populates="person", lazy="raise")
 
     @property
     def country_id(self) -> Optional[int]:
@@ -232,3 +235,112 @@ class EmployeeEquipment(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     person: Mapped["EmployeePerson"] = relationship(back_populates="equipments", lazy="raise")
+
+
+class EmployeeAction(Base):
+    __tablename__ = "employee_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    person_id: Mapped[int] = mapped_column(Integer, ForeignKey("employee_persons.id"))
+    action_id: Mapped[Optional[int]] = mapped_column(Integer)
+    action_status_id: Mapped[Optional[int]] = mapped_column(Integer)
+    description: Mapped[Optional[str]] = mapped_column(String)
+    start_date: Mapped[Optional[date]] = mapped_column(Date)
+    end_date: Mapped[Optional[date]] = mapped_column(Date)
+    is_completed: Mapped[Optional[bool]] = mapped_column(Boolean)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_by: Mapped[Optional[str]] = mapped_column(String)
+    is_visible_to_customers: Mapped[Optional[bool]] = mapped_column(Boolean)
+    salary_request_id: Mapped[Optional[int]] = mapped_column(Integer)
+    from_customer: Mapped[Optional[bool]] = mapped_column(Boolean)
+    account_id: Mapped[Optional[int]] = mapped_column(Integer)
+
+    person: Mapped["EmployeePerson"] = relationship(back_populates="actions", lazy="raise")
+
+
+class EmployeeComment(Base):
+    __tablename__ = "employee_comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    person_id: Mapped[int] = mapped_column(Integer, ForeignKey("employee_persons.id"))
+    comment: Mapped[Optional[str]] = mapped_column(String)
+    retool_user: Mapped[Optional[str]] = mapped_column(String)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    person: Mapped["EmployeePerson"] = relationship(back_populates="comments", lazy="raise")
+
+
+# --- Tables owned by other domains, read-only here ---------------------------------------
+# The employee screens read them, but they belong to modules not migrated yet (operations:
+# PCU and warrior reports; billing: bill exceptions). Plain Core tables, like the catalogs:
+# when their feature exists, the table moves there and these queries import it from there.
+
+pcu_responses = Table(
+    "pcu_responses",
+    Base.metadata,
+    Column("id", Integer, primary_key=True),
+    Column("assignation_id", Integer),
+    Column("manager_id", Integer),
+    Column("productivity_score", Integer),
+    Column("motivation_score", Integer),
+    Column("environment_score", Integer),
+    Column("productivity_comment", String),
+    Column("motivation_comment", String),
+    Column("environment_comment", String),
+    Column("created_at", DateTime),
+    Column("updated_at", DateTime),
+    Column("report_date", Date),
+    Column("pending_topics", String),
+    Column("is_visible_to_customers", Boolean),
+    Column("risk_status_id", Integer),
+)
+
+report_employee_warrior = Table(
+    "report_employee_warrior",
+    Base.metadata,
+    Column("id", Integer, primary_key=True),
+    Column("employee_position_id", Integer),
+    Column("manager_position_id", Integer),
+    Column("created_at", DateTime),
+    Column("updated_at", DateTime),
+    Column("avg_realization", Float),
+    Column("avg_potential", Float),
+    Column("warrior_type", Integer),
+    Column("warrior_type_id", Integer),
+)
+
+bill_exceptions = Table(
+    "bill_exceptions",
+    Base.metadata,
+    Column("id", Integer, primary_key=True),
+    Column("reason_id", Integer),
+    Column("assignation_id", Integer),
+    Column("account_id", Integer),
+    Column("exception_id", Integer),
+    Column("frecuency_id", Integer),
+    Column("cycle_id", Integer),
+    Column("start_date", Date),
+    Column("end_date", Date),
+    Column("value", Numeric(10, 2)),
+    Column("transactional_fee", Numeric(10, 2)),
+    Column("total", Numeric(10, 2)),
+    Column("approved_by", String),
+    Column("is_billed", Boolean),
+    Column("notes", String),
+    Column("created_at", DateTime),
+    Column("updated_at", DateTime),
+    Column("declined_reason_id", Integer),
+    Column("is_leader_managers_approved", Boolean),
+    Column("is_backoffice_approved", Boolean),
+    Column("document_support_url", String),
+    Column("declination_notes", String),
+    Column("created_by", String),
+    Column("is_billable", Boolean),
+    Column("for_billing", Boolean),
+    Column("is_adjustment", Boolean),
+    Column("po_number", String),
+    Column("additional_info", JSONB),
+    Column("team_id", Integer),
+)

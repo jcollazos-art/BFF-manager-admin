@@ -39,8 +39,13 @@ _CUSTOM: Dict[str, dict] = {
     }),
     "attachment_subtype": dict(relations={"type": Relation("attachment_type", "type_id")}),
     "cities": dict(relations={"country": Relation("countries", "country_id")}),
+    "companies": dict(relations={"industry": Relation("industries", "industry_id")}),
     "cost_centers": dict(relations={"profit_loss": Relation("profit_and_loss", "profit_loss_id")}),
     "exceptions": dict(relations={"exception_type": Relation("exception_types", "exception_type_id")}),
+    "financial_dimensions": dict(relations={
+        "dimension_type": Relation("financial_dimension_types", "dimension_type_id"),
+        "parent": Relation("financial_dimensions", "parent_financial_dimension_id"),
+    }),
     "governance_concept_type_values": dict(relations={
         "concept_type": Relation("governance_concept_types", "concept_type_id"),
     }),

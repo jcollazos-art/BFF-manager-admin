@@ -75,6 +75,12 @@ general_action_plan_types = _catalog(
     Column("name", String),
     Column("description", String),
 )
+general_action_statuses = _catalog(
+    "general_action_statuses",
+    Column("name", String),
+    Column("type", String),
+    Column("description", String),
+)
 general_actions = _catalog(
     "general_actions",
     Column("name", String),
@@ -113,6 +119,17 @@ general_client_coverage_status = _catalog(
     Column("name", String),
     Column("description", String),
 )
+general_companies = _catalog(
+    "general_companies",
+    Column("industry_id", Integer),
+    Column("name", String),
+    Column("website", String),
+    Column("logo_url", String),
+    Column("phone_number", String),
+    Column("phone_indicative", String),
+    Column("is_active", Boolean),
+    Column("placement_id", Integer),
+)
 general_color_disc = _catalog("general_color_disc", Column("name", String), timestamps=False)
 general_competences = _catalog(
     "general_competences",
@@ -133,6 +150,14 @@ general_cost_centers = _catalog(
     Column("description", String),
 )
 general_countries = _catalog("general_countries", Column("name", String))
+general_cycles = _catalog(
+    "general_cycles",
+    Column("name", String),
+    Column("start_date", Date),
+    Column("end_date", Date),
+    Column("calendar_days", Integer),
+    Column("business_days", Integer),
+)
 general_document_types = _catalog("general_document_types", Column("name", String))
 general_equipments = _catalog(
     "general_equipments",
@@ -153,6 +178,16 @@ general_financial_dimension_types = _catalog(
     Column("name", String),
     Column("level", String),
     Column("description", String),
+)
+general_financial_dimensions = _catalog(
+    "general_financial_dimensions",
+    Column("parent_financial_dimension_id", Integer),
+    Column("dimension_type_id", Integer),
+    Column("name", String),
+    Column("is_active", Boolean),
+    Column("description", String),
+    Column("ops_id", String),
+    Column("last_updated_by", String),
 )
 general_flags = _catalog("general_flags", Column("order", Integer), Column("name", String))
 general_frequencies = _catalog(

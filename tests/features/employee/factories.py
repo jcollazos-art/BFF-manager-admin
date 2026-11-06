@@ -8,6 +8,8 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.features.employee.models import (
+    EmployeeAction,
+    EmployeeComment,
     EmployeeEquipment,
     EmployeeLanguage,
     EmployeeOperationalProfile,
@@ -87,6 +89,24 @@ def make_language(db: Session, person: EmployeePerson, **overrides) -> EmployeeL
 
 def make_equipment(db: Session, person: EmployeePerson, **overrides) -> EmployeeEquipment:
     return _insert(db, EmployeeEquipment(**{"person_id": person.id, "hardware_id": 1, **overrides}))
+
+
+def make_action(db: Session, person: EmployeePerson, **overrides) -> EmployeeAction:
+    fields = {"person_id": person.id, "description": "Follow up", "is_completed": False, **overrides}
+    return _insert(db, EmployeeAction(**fields))
+
+
+def make_comment(db: Session, person: EmployeePerson, **overrides) -> EmployeeComment:
+    fields = {"person_id": person.id, "comment": "Great sprint", "retool_user": "ops@lean-tech.io", **overrides}
+    return _insert(db, EmployeeComment(**fields))
+
+
+def make_assigned_employee(db: Session, **assignation_overrides):
+    """Person -> role -> operational profile -> assignation; returns (person, role, assignation)."""
+    person = make_person(db)
+    role = make_role(db, person)
+    assignation = make_assignation(db, make_operational_profile(db, role), **assignation_overrides)
+    return person, role, assignation
 
 
 def make_full_employee(db: Session) -> EmployeePerson:

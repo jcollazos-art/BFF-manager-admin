@@ -3,7 +3,7 @@ project (see shared/permissions.py). Once one does, it goes on `APIRouter(...,
 dependencies=[...])` here, exactly like every router in bff-lsg-placement - nothing else
 in this file needs to change for that."""
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
@@ -30,10 +30,22 @@ from app.features.employee.schemas.request import (
     OperationAssignationUpsertItem,
 )
 from app.features.employee.schemas.response import (
+    EmployeeAccountRiskOut,
+    EmployeeActionOut,
+    EmployeeAssignationRowOut,
+    EmployeeBillExceptionOut,
+    EmployeeCommentOut,
+    EmployeeLanguageRowOut,
     EmployeePersonDetailOut,
     EmployeePersonOut,
     EmployeePersonSummaryOut,
     EmployeePositionRowOut,
+    EmployeeRoleRowOut,
+    EmployeeRoleSeniorityOut,
+    EmployeeTechnologyExperienceOut,
+    EmployeeTechnologyRowOut,
+    EmployeeTechnologySeniorityOut,
+    EmployeeWarriorEvaluationOut,
 )
 from app.features.employee.repository import EmployeeRepository
 from app.features.employee import custom_repository
@@ -86,6 +98,97 @@ def get_employee_person_positions(person_id: int, repo: EmployeeRepository = Dep
     """Positions table of the employee's main view, active first, with names.
     An unknown person returns an empty list."""
     return Envelope(data=query.get_person_positions(repo, person_id))
+
+
+@router.get("/persons/{person_id}/technologies", response_model=Envelope[List[EmployeeTechnologyRowOut]])
+def get_employee_person_technologies(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Technologies of the employee's main view with the seniority name, principal first.
+    An unknown person returns an empty list."""
+    return Envelope(data=query.get_person_technologies(repo, person_id))
+
+
+# The rest of the employee's main view: one endpoint per table/chart. An unknown person
+# returns an empty list in all of them.
+
+
+@router.get("/persons/{person_id}/roles", response_model=Envelope[List[EmployeeRoleRowOut]])
+def get_employee_person_roles(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Roles with names and operational-profile flags, main role first."""
+    return Envelope(data=query.get_person_roles(repo, person_id))
+
+
+@router.get("/persons/{person_id}/assignations", response_model=Envelope[List[EmployeeAssignationRowOut]])
+def get_employee_person_assignations(person_id: int, db: Session = Depends(get_db)):
+    """Each assignation paired with the positions it overlaps, with the margin (custom SQL)."""
+    return Envelope(data=custom_repository.get_person_assignations(db, person_id))
+
+
+@router.get("/persons/{person_id}/languages", response_model=Envelope[List[EmployeeLanguageRowOut]])
+def get_employee_person_languages(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Every language with its level (the English card filters `language == "English"`)."""
+    return Envelope(data=query.get_person_languages(repo, person_id))
+
+
+@router.get(
+    "/persons/{person_id}/technology-experience", response_model=Envelope[List[EmployeeTechnologyExperienceOut]]
+)
+def get_employee_person_technology_experience(person_id: int, db: Session = Depends(get_db)):
+    """Technologies with the experience gained on each account using them (custom SQL)."""
+    return Envelope(data=custom_repository.get_person_technology_experience(db, person_id))
+
+
+@router.get("/persons/{person_id}/role-seniorities", response_model=Envelope[List[EmployeeRoleSeniorityOut]])
+def get_employee_person_role_seniorities(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Highest technology seniority per role (seniority-by-role chart)."""
+    return Envelope(data=query.get_person_role_seniorities(repo, person_id))
+
+
+@router.get(
+    "/persons/{person_id}/technology-seniorities", response_model=Envelope[List[EmployeeTechnologySeniorityOut]]
+)
+def get_employee_person_technology_seniorities(
+    person_id: int,
+    role_name: Optional[str] = Query(None, description="Only this role (case-insensitive exact name)"),
+    repo: EmployeeRepository = Depends(get_repository),
+):
+    """Technologies with seniority and role; `role_name` filters by the role picked in the chart."""
+    return Envelope(data=query.get_person_technology_seniorities(repo, person_id, role_name))
+
+
+@router.get("/persons/{person_id}/warrior-evaluations", response_model=Envelope[List[EmployeeWarriorEvaluationOut]])
+def get_employee_person_warrior_evaluations(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Early-warning (warrior) evaluations, newest first."""
+    return Envelope(data=query.get_person_warrior_evaluations(repo, person_id))
+
+
+@router.get("/persons/{person_id}/account-risks", response_model=Envelope[List[EmployeeAccountRiskOut]])
+def get_employee_person_account_risks(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Latest PCU risk status per account, by account name."""
+    return Envelope(data=query.get_person_account_risks(repo, person_id))
+
+
+@router.get("/persons/{person_id}/active-accounts", response_model=Envelope[List[int]])
+def get_employee_person_active_accounts(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Ids of the accounts where the employee has an assignation that hasn't ended."""
+    return Envelope(data=query.get_person_active_account_ids(repo, person_id))
+
+
+@router.get("/persons/{person_id}/bill-exceptions", response_model=Envelope[List[EmployeeBillExceptionOut]])
+def get_employee_person_bill_exceptions(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Bill exceptions of the employee's assignations, newest first."""
+    return Envelope(data=query.get_person_bill_exceptions(repo, person_id))
+
+
+@router.get("/persons/{person_id}/actions", response_model=Envelope[List[EmployeeActionOut]])
+def get_employee_person_actions(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Actions with action and status names, newest first."""
+    return Envelope(data=query.get_person_actions(repo, person_id))
+
+
+@router.get("/persons/{person_id}/comments", response_model=Envelope[List[EmployeeCommentOut]])
+def get_employee_person_comments(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Comments, newest first."""
+    return Envelope(data=query.get_person_comments(repo, person_id))
 
 
 # --- writes -------------------------------------------------------------------------------

@@ -165,6 +165,20 @@ class EmployeePositionRowOut(BaseModel):
     silo: Optional[str]
 
 
+class EmployeeTechnologyRowOut(BaseModel):
+    """Row of the technologies table in the employee's main view - built by
+    EmployeeRepository.get_person_technologies."""
+
+    id: int
+    person_id: int
+    knowledge_external_id: Optional[int]
+    seniority_external_id: Optional[int]
+    is_principal: Optional[bool]
+    is_verified: Optional[bool]
+    seniority: Optional[str]
+    score: Optional[int]
+
+
 class EmployeeRoleSummaryOut(BaseModel):
     id: int
     role: Optional[str]
@@ -195,3 +209,152 @@ class EmployeePersonSummaryOut(BaseModel):
     tech_stack: Optional[str]
     main_tech: Optional[str]
     language_stack: Optional[str]
+
+
+# --- Tables of the employee's main view (GET /persons/{id}/<table>) --------------------------
+
+
+class EmployeeRoleRowOut(BaseModel):
+    """One row per operational profile of each role (role fields repeat)."""
+
+    id: int
+    role_id: Optional[int]
+    role: Optional[str]
+    seniority_id: Optional[int]
+    seniority: Optional[str]
+    is_main: Optional[bool]
+    operational_profile_id: Optional[int]
+    is_certified: Optional[bool]
+    is_available: Optional[bool]
+
+
+class EmployeeLanguageRowOut(BaseModel):
+    id: int
+    language_id: Optional[int]
+    language: Optional[str]
+    language_level_id: Optional[int]
+    level: Optional[str]
+    last_evaluation_date: Optional[datetime]
+
+
+class EmployeeWarriorEvaluationOut(BaseModel):
+    id: int
+    employee_position_id: Optional[int]
+    ew_status: Optional[str]
+    last_evaluation_date: Optional[datetime]
+
+
+class EmployeeAccountRiskOut(BaseModel):
+    """Latest PCU risk status of one account."""
+
+    account_id: int
+    account: Optional[str]
+    status: Optional[str]
+    color: Optional[str]
+
+
+class EmployeeAssignationRowOut(BaseModel):
+    """One (assignation, overlapping position) pair - built by sql/person_assignations.sql."""
+
+    assignation_id: int
+    account_id: Optional[int]
+    account: Optional[str]
+    account_type_id: Optional[int]
+    account_type: Optional[str]
+    billing_cycle: Optional[int]
+    manager_id: Optional[int]
+    manager: Optional[str]
+    role_id: int
+    employee_id: int
+    role: Optional[str]
+    seniority: Optional[str]
+    is_billable: Optional[bool]
+    allocation: Optional[float]
+    monthly_sales_price: Optional[float]
+    sales_price: Optional[float]
+    start_date: Optional[date]
+    effective_date: Optional[date]
+    end_date: Optional[date]
+    po_number: Optional[str]
+    cost_center_id: Optional[int]
+    cost_center: Optional[str]
+    p_l_category: Optional[str]
+    silo_name: Optional[str]
+    financial_dimension: Optional[str]
+    position_id: int
+    salary: Optional[float]
+    employee_cost: Optional[float]
+    is_active: bool
+    position_end_date: Optional[date]
+    margin: Optional[float]
+
+
+class EmployeeTechnologyExperienceOut(BaseModel):
+    """One (technology, account) pair - built by sql/person_technology_experience.sql."""
+
+    person_id: int
+    technology_id: int
+    technology: Optional[str]
+    type: Optional[str]
+    seniority: Optional[str]
+    exp_in_days: Optional[int]
+    exp_in_year: float
+    account_id: Optional[int]
+    account: Optional[str]
+
+
+class EmployeeRoleSeniorityOut(BaseModel):
+    role_id: int
+    role_name: Optional[str]
+    seniority: Optional[str]
+    score: Optional[int]
+
+
+class EmployeeTechnologySeniorityOut(BaseModel):
+    technology_id: int
+    tech: Optional[str]
+    seniority: Optional[str]
+    score: Optional[int]
+    role_name: Optional[str]
+
+
+class EmployeeBillExceptionOut(BaseModel):
+    id: int
+    name: str
+    exception_id: Optional[int]
+    exception: Optional[str]
+    cycle_id: Optional[int]
+    cycle: Optional[date]
+    account_id: Optional[int]
+    account: Optional[str]
+    reason_id: Optional[int]
+    reason: Optional[str]
+    start_date: Optional[date]
+    end_date: Optional[date]
+    value: Optional[float]
+    transactional_fee: Optional[float]
+    approved_by: Optional[str]
+    is_billed: Optional[bool]
+    notes: Optional[str]
+    assignation_id: Optional[int]
+
+
+class EmployeeActionOut(BaseModel):
+    id: int
+    action_id: Optional[int]
+    action_name: Optional[str]
+    description: Optional[str]
+    start_date: Optional[date]
+    end_date: Optional[date]
+    action_status_id: Optional[int]
+    action_status_name: Optional[str]
+    is_completed: Optional[bool]
+
+
+class EmployeeCommentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    comment: Optional[str]
+    retool_user: Optional[str]
+    created_at: Optional[datetime]

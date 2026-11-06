@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session  # noqa: E402
 from testcontainers.community.postgres import PostgresContainer  # noqa: E402
 
 import app.features.catalogs.tables  # noqa: E402,F401 - registers the tables on Base.metadata
+import app.features.companies.models  # noqa: E402,F401 - registers the tables on Base.metadata
 import app.features.employee.models  # noqa: E402,F401 - registers the tables on Base.metadata
 from app.infrastructure.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
