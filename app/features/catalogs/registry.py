@@ -68,9 +68,9 @@ def _default_sort(table: Table) -> str:
 
 
 def _build() -> Dict[str, CatalogSpec]:
-    catalog_tables = {
-        value.name.removeprefix("general_"): value for value in vars(tables).values() if isinstance(value, Table)
-    }
+    all_tables = [value for value in vars(tables).values() if isinstance(value, Table)]
+    catalog_tables = {table.name.removeprefix("general_"): table for table in all_tables}
+    assert len(catalog_tables) == len(all_tables), "two tables in tables.py map to the same catalog name"
     catalogs = {
         name: CatalogSpec(table=table, **{"default_sort": _default_sort(table), **_CUSTOM.get(name, {})})
         for name, table in sorted(catalog_tables.items())

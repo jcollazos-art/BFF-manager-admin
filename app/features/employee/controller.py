@@ -29,8 +29,14 @@ from app.features.employee.schemas.request import (
     FilterEmployeePerson,
     OperationAssignationUpsertItem,
 )
-from app.features.employee.schemas.response import EmployeePersonDetailOut, EmployeePersonOut
+from app.features.employee.schemas.response import (
+    EmployeePersonDetailOut,
+    EmployeePersonOut,
+    EmployeePersonSummaryOut,
+    EmployeePositionRowOut,
+)
 from app.features.employee.repository import EmployeeRepository
+from app.features.employee import custom_repository
 from app.features.employee.use_cases import query, write
 from app.infrastructure.database import get_db
 from app.shared.errors import get_or_404
@@ -66,6 +72,20 @@ def get_employee_persons(
 def get_employee_person_detail(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
     person = get_or_404(query.get_person_detail(repo, person_id), detail="employee_persons not found")
     return Envelope(data=person)
+
+
+@router.get("/persons/{person_id}/summary", response_model=Envelope[EmployeePersonSummaryOut])
+def get_employee_person_summary(person_id: int, db: Session = Depends(get_db)):
+    """Header of the employee's main view with names instead of ids (custom SQL)."""
+    summary = get_or_404(custom_repository.get_person_summary(db, person_id), detail="employee_persons not found")
+    return Envelope(data=summary)
+
+
+@router.get("/persons/{person_id}/positions", response_model=Envelope[List[EmployeePositionRowOut]])
+def get_employee_person_positions(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Positions table of the employee's main view, active first, with names.
+    An unknown person returns an empty list."""
+    return Envelope(data=query.get_person_positions(repo, person_id))
 
 
 # --- writes -------------------------------------------------------------------------------

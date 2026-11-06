@@ -13,12 +13,17 @@ In short:
   for anything that is "get/edit this entity and its children" - see `features/employee` for
   the worked example (a single `GET /v1/employee/details/{id}` replaces 7 separate hand-written
   Retool queries via one `selectinload` query).
-- **Track B** (a feature's `reports.py`, none yet in this repo): raw SQL/Core for pivots,
-  dashboards, anything that aggregates across many rows - deliberately untouched by Track A.
+- **Track B** (`app/features/*/sql/*.sql`): custom SQL for read-only views the ORM can't
+  express well in one query - per-row aggregates (`json_agg`, `string_agg`), `LATERAL`,
+  window functions, reports. A view that only resolves catalog names with joins stays in
+  `repository.py` as a `select()` with `outerjoin`s (e.g. `/persons/{id}/positions`). One file per query, bind parameters only, run from the feature's
+  `custom_repository.py` with the `shared/sql.py` helpers (`fetch_one`, `fetch_all`, `fetch_page`).
+  Every file is checked by `tests/test_sql_files.py`. Worked example:
+  `GET /v1/employee/persons/{id}/summary`.
 - **`app/shared/`**: the cross-cutting pieces every feature reuses instead of
   redeclaring - `errors.py` (AppError + code/detail), `responses.py` (`Page[T]`/`Envelope[T]`),
   `pagination.py` (`Pagination`/`Sort`, exposed as configurable dependency *factories*, not
-  fixed values - see section 6.4 of the doc), `query_filters.py`, `repository.py` (`BaseRepository`),
+  fixed values - see section 6.4 of the doc), `query_filters.py`, `repository.py` (`BaseRepository`), `sql.py` (`load_sql`, `fetch_*`),
   `projection.py`, `permissions.py` (stub - no auth feature exists yet), `middleware.py`.
 
 ## Local setup

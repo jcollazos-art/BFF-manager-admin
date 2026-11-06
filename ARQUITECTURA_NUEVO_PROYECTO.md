@@ -37,13 +37,17 @@ class EmployeePerson(Base):
 
 `lazy="raise"` es obligatorio en toda relación: si alguna se accede sin haberla cargado explícitamente, falla en lugar de disparar un N+1 silencioso. Es el equivalente a que Prisma obligue a escribir `include`. Con esto, el detalle completo de un empleado, que en Retool eran 7 queries, es **una sola** query con `selectinload` (`EmployeeRepository.get_person_detail`).
 
-### Track B — Reportería (SQL crudo / Core)
+### Track B — SQL propio (archivos `.sql`)
 
-Para pivots, CTEs, agregaciones con `FILTER (WHERE ...)` y dashboards. No se fuerza a pasar por `relationship()`, porque ahí el ORM se vuelve torpe y lento. Va en `reports.py` de cada feature (todavía no existe ninguno), con lista blanca para cualquier identificador dinámico.
+Para lecturas que el ORM no expresa bien en una sola query: `string_agg`/`json_agg`, `LATERAL`, `DISTINCT ON`, funciones de ventana, CTEs, pivots y reportes. El SQL va en un archivo `.sql` dentro de la feature y lo ejecuta su `custom_repository.py` (ver "SQL propio" en la sección 5). Caso actual: `employee/sql/person_summary.sql`.
+
+Una vista que solo **resuelve nombres** con joins (ids de catálogo → `name`) no necesita `.sql`: es un `select()` con `outerjoin` a las tablas de `catalogs/tables.py` en `repository.py`, que genera el mismo SQL en una sola query. Caso actual: `EmployeeRepository.get_person_positions`, que antes era un `.sql` y se pasó al ORM con resultado idéntico (300/300 personas contra la BD real) y el mismo tiempo.
 
 **Regla de decisión**:
-- ¿"Dame esta entidad (o pocas) con sus relaciones, para mostrar o editar"? → **Track A**.
-- ¿"Cuenta, agrega o pivotea muchas filas para un reporte"? → **Track B**.
+- ¿"Dame esta entidad con sus relaciones, para **editarla**"? → **Track A** (ORM).
+- ¿Listado genérico o catálogo? → `BaseRepository` / Core.
+- ¿Vista de solo lectura que solo resuelve nombres con joins? → `select()` + `outerjoin` en `repository.py`.
+- ¿Vista con agregados por fila (`json_agg`, `string_agg`), `LATERAL`, ventanas o reportes? → **Track B** (`.sql`).
 
 ## 4. Estructura del proyecto
 
@@ -60,6 +64,7 @@ app/
     pagination.py         # pagination_params(), sort_params() - fábricas de Depends
     query_filters.py      # merge_query_filters
     repository.py         # BaseRepository - CRUD genérico + bulk best-effort
+    sql.py                # load_sql, fetch_one, fetch_all, fetch_page - para los .sql
     projection.py         # parse_fields (portado, aún sin usar - ver sección 9)
     permissions.py        # check_permission (stub - no hay auth todavía)
     middleware.py         # RequestTimingMiddleware (log de método, ruta, status, duración)
@@ -73,7 +78,10 @@ app/
       controller.py       # POST /catalogs
     employee/
       models.py           # modelos ORM del agregado (todas sus tablas en un módulo)
-      repository.py       # EmployeeRepository(BaseRepository) - solo consultas propias
+      repository.py       # EmployeeRepository(BaseRepository) - ORM: agregado, escrituras, /details, /positions
+      custom_repository.py # repositorio de solo lectura con SQL propio (Track B)
+      sql/
+        person_summary.sql    # cabecera de la vista del empleado
       use_cases/
         query.py          # funciones de lectura
         write.py          # funciones de escritura
@@ -86,12 +94,15 @@ app/
 ### Flujo de una request
 
 ```
-controller  →  use_cases  →  repository  →  models (ORM)  →  Postgres
-   │              │              │
-   │              │              └─ ejecuta / hace flush, nunca commit
-   │              └─ reglas del caso de uso; convierte Pydantic → dict
-   └─ valida entrada (schemas/request), inyecta repo con Depends, envuelve en Envelope/Page
+ORM:                controller  →  use_cases  →  repository  →  models (ORM)  →  Postgres
+SQL propio:         controller  →  custom_repository.py  →  sql/*.sql  →  Postgres
+   │                   │              │
+   │                   │              └─ ejecuta / hace flush, nunca commit
+   │                   └─ reglas del caso de uso; convierte Pydantic → dict
+   └─ valida entrada (schemas/request), inyecta repo o sesión con Depends, envuelve en Envelope/Page
 ```
+
+Las vistas de solo lectura no pasan por un use case: no tienen lógica, así que solo reenviarían la llamada. Si una vista llega a necesitar lógica (combinar dos queries, reglas de negocio), se le agrega su función en `use_cases/query.py`.
 
 **La sesión es la unidad de trabajo de la request.** `get_db` abre la sesión, hace **un solo `commit`** al final si todo salió bien y `rollback` si hubo una excepción. Ni los repositorios ni los use cases hacen commit, así que un flujo de varios pasos nunca queda aplicado a medias.
 
@@ -157,6 +168,50 @@ Crear y actualizar es **un solo endpoint por entidad**: `POST /<feature>/<recurs
   - Para verificar tipos: `select column_name, data_type, numeric_precision, numeric_scale from information_schema.columns where table_name = '...'`.
 - **Los ids de catálogos** (`role_id`, `seniority_id`, `technology_id`, `silo_id`, `cost_center_id`, etc.) son enteros planos, sin FK ni `relationship()`. El frontend resuelve sus nombres con `POST /catalogs`.
 - Solo las relaciones **dentro del agregado** se declaran como `ForeignKey` + `relationship()`.
+
+### SQL propio: archivos `.sql` por feature
+
+Una feature separa sus lecturas en dos archivos:
+
+| Archivo | Para qué | Estilo |
+|---|---|---|
+| `repository.py` | Todo lo que el ORM expresa en una query: el agregado, escrituras, `/details`, vistas que resuelven nombres con joins (`/positions`) | ORM / `select()`, hereda de `BaseRepository` |
+| `custom_repository.py` + `sql/` | Lo que el ORM no expresa bien: agregados por fila, `LATERAL`, ventanas, reportes (`/summary`) | Funciones que reciben la sesión y ejecutan un `.sql` |
+
+La pregunta no es "¿se edita o se muestra?" sino "¿el ORM lo genera en una sola query legible?". Si sí, ORM: lo tipa el modelo y un renombre de columna rompe al importar. Si no, `.sql`.
+
+```
+features/employee/
+  custom_repository.py       ← _PERSON_SUMMARY = load_sql(__file__, "person_summary")
+  sql/person_summary.sql     ← SQL puro, parámetros :person_id
+```
+
+```python
+# custom_repository.py
+def get_person_summary(db: Session, person_id: int) -> Optional[Row]:
+    return fetch_one(db, _PERSON_SUMMARY, person_id=person_id)
+
+# controller.py - sin use case: la vista no tiene lógica
+@router.get("/persons/{person_id}/summary", response_model=Envelope[EmployeePersonSummaryOut])
+def get_employee_person_summary(person_id: int, db: Session = Depends(get_db)):
+    summary = get_or_404(custom_repository.get_person_summary(db, person_id), detail="employee_persons not found")
+    return Envelope(data=summary)
+```
+
+Helpers de `shared/sql.py`:
+- `fetch_one(db, SQL, **params)` → `dict | None`; `fetch_all(db, SQL, **params)` → `list[dict]`.
+- `fetch_page(db, SQL, params, page=, per_page=, sortable={...}, sort=, direction=)` → `(rows, total)`. Envuelve el `.sql` como subconsulta para el conteo y para `ORDER BY`/`LIMIT`/`OFFSET`, sin tocar el archivo. Solo ordena por columnas de `sortable` (columnas de salida del `.sql`) y desempata por `id`; cualquier otro valor es un `InvalidFieldError`. Los listados paginados y los reportes usan esto, no SQL armado a mano.
+
+Reglas:
+1. **Un archivo por query**, en `features/<feature>/sql/`. Se puede abrir con resaltado de sintaxis y pegar tal cual en DBeaver.
+2. **Solo parámetros enlazados (`:param`)**, nunca f-strings ni `.format()`. Un filtro opcional se escribe en el SQL: `AND (:city_id IS NULL OR ep.city_id = :city_id)`. Paginación y orden dinámico, con `fetch_page`. Si un query necesita mucho SQL dinámico (filtros que cambian joins), va con Core y no en `.sql`.
+3. **Se carga una vez, al importar** (`load_sql` a nivel de módulo), y lo ejecuta solo `custom_repository.py`.
+4. **La salida pasa siempre por un `response_model`.** El contrato del endpoint lo define Pydantic, no los alias del SQL.
+5. **Toda tabla que toque el `.sql` está declarada** en algún `models.py` o en `catalogs/tables.py`. Así el contenedor de tests la crea y el drift la vigila.
+6. **Tests:** `tests/test_sql_files.py` ejecuta un `EXPLAIN` de todos los `.sql` contra el Postgres de test, así que un error de sintaxis o una columna inexistente falla sin escribir nada. El comportamiento se prueba por el endpoint, como cualquier otro (`test_summary.py`, `test_positions.py`).
+7. Arriba de cada archivo, un comentario con **qué vista alimenta** y, si reemplaza un query de Retool, qué corrige.
+
+**Reportes que cruzan features** (p. ej. empleados + cuentas + facturación) no pertenecen a ninguna feature: van en `features/reports/` con la misma forma (`custom_repository.py`, `sql/`, `controller.py` con prefijo `/reports`). Se crea cuando llegue el primero.
 
 ### Catálogos: un solo endpoint para todos (`POST /catalogs`)
 
@@ -291,7 +346,7 @@ Agrega `tests/features/<feature>/` con su `factories.py` y sus `test_*.py`, e im
 1. **Verificar los tipos reales** de las tablas en `information_schema.columns`, sobre todo las columnas `numeric`.
 2. `features/<feature>/models.py`: los modelos del agregado, con `relationship(..., lazy="raise")` dentro del agregado y enteros planos para los ids de catálogos externos.
 3. `features/<feature>/schemas/request.py` y `schemas/response.py`: un `XUpsertItem` por entidad (`id` y todos los campos opcionales) y los `XOut` (`from_attributes=True`).
-4. `features/<feature>/repository.py`: `class XRepository(BaseRepository)`, solo con las consultas propias (listado con filtros y `_SORTABLE_FIELDS`, detalle con `selectinload`).
+4. `features/<feature>/repository.py`: `class XRepository(BaseRepository)`, solo con las consultas propias (listado con filtros y `_SORTABLE_FIELDS`, detalle con `selectinload`). Las vistas de solo lectura con SQL propio van en `custom_repository.py` + `sql/<nombre>.sql` (ver "SQL propio" en la sección 5).
 5. `features/<feature>/use_cases/query.py` y `write.py`: funciones que reciben `repo`. Para escrituras, se reutiliza el patrón de `employee` (`bulk_upsert` + deletes).
 6. `features/<feature>/controller.py`: `router = APIRouter(prefix="/<feature>")`, `get_repository`, un `POST /<recurso>/bulk-upsert` por entidad con su `required_on_create`, deletes aparte, rutas estáticas antes que las de parámetro, `response_model` en todo.
 7. Registrarlo en `app/api/v1.py` con `router.include_router(...)`.
@@ -309,6 +364,7 @@ Agrega `tests/features/<feature>/` con su `factories.py` y sus `test_*.py`, e im
 - **Catálogos**:
   - `general_action_plan_statuses` (Anexo B) no existe en la base de datos; ¿es `general_action_statuses`? Hasta confirmarlo no se expone ninguna de las dos.
   - `general_silo` del Anexo B es `general_silos` en la base de datos; se expone como `silos`.
+  - El catálogo `technologies` es la tabla `technologies` (a la que apunta `employee_technologies.technology_id`), no `general_technologies`, que está vacía y no se expone. 717 filas de `employee_technologies` apuntan a ids que no existen en `technologies`.
   - Existen en la base pero no están en el Anexo B, así que no se exponen: `general_action_statuses`, `general_companies`, `general_cycles`, `general_financial_dimensions`, `general_resource_release_autonomy`, `general_status`.
   - Solo lectura por ahora. Las escrituras serían un `POST /catalogs/{catalog}/bulk-upsert` sobre el mismo registro.
   - No se puede filtrar por columnas de una relación (`"country.name": "..."`), como sí permitía placement; se agrega si aparece el caso.

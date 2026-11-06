@@ -387,10 +387,16 @@ general_sub_account_types = _catalog(
     Column("name", String),
     Column("description", String),
 )
-general_technologies = _catalog(
-    "general_technologies",
+# The technologies catalog is `technologies`, not `general_technologies`: employee_technologies
+# points here, and general_technologies is empty.
+technologies = _catalog(
+    "technologies",
     Column("name", String),
-    Column("description", String),
+    Column("provider", String),
+    Column("role_id", Integer),
+    Column("language_id", Integer),
+    Column("category_id", Integer),
+    Column("tech_id", Integer),
 )
 general_technology_categories = _catalog(
     "general_technology_categories",

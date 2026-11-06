@@ -139,3 +139,59 @@ class EmployeePersonDetailOut(EmployeePersonOut):
     technologies: List[EmployeeTechnologyOut] = []
     languages: List[EmployeeLanguageOut] = []
     equipments: List[EmployeeEquipmentOut] = []
+
+
+class EmployeePositionRowOut(BaseModel):
+    """Row of the positions table in the employee's main view - built by
+    EmployeeRepository.get_person_positions."""
+
+    id: int
+    contract_type_id: Optional[int]
+    currency: Optional[str]
+    start_date: Optional[date]
+    effective_date: Optional[date]
+    end_date: Optional[date]
+    salary: Optional[float]
+    additional_salary: Optional[float]
+    is_active: Optional[bool]
+    cost: Optional[float]
+    bonus: Optional[float]
+    silo_id: Optional[int]
+    cost_center_id: Optional[int]
+    employee_role: Optional[str]
+    contract_type: Optional[str]
+    cost_center: Optional[str]
+    seniority: Optional[str]
+    silo: Optional[str]
+
+
+class EmployeeRoleSummaryOut(BaseModel):
+    id: int
+    role: Optional[str]
+    seniority: Optional[str]
+    is_main: Optional[bool]
+
+
+class EmployeePersonSummaryOut(BaseModel):
+    """Header of the employee's main view, catalog names already resolved - built by
+    sql/person_summary.sql, one query."""
+
+    employee_id: int
+    fullname: str
+    first_name: Optional[str]
+    last_name: Optional[str]
+    personal_email: Optional[str]
+    email: Optional[str]
+    phone_number: Optional[str]
+    photo_url: Optional[str]
+    address: Optional[str]
+    identification: Optional[str]
+    birth_date: Optional[date]
+    city: Optional[str]
+    country: Optional[str]
+    nationality: Optional[str]
+    identification_type: Optional[str]
+    roles: List[EmployeeRoleSummaryOut]
+    tech_stack: Optional[str]
+    main_tech: Optional[str]
+    language_stack: Optional[str]

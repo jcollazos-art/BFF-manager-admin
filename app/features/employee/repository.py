@@ -1,13 +1,21 @@
 """One repository per aggregate (EmployeePerson), not one per table: every child entity
 (roles, operational profiles, positions, assignations, technologies, languages, equipments)
 belongs to this aggregate and goes through the generic CRUD inherited from BaseRepository.
-Only queries with real shape (listing, the eager-loaded detail) are written here."""
+Only queries with real shape (listing, the eager-loaded detail, the positions table) are written
+here; read-only views that need custom SQL live in custom_repository.py."""
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import func, select
+from sqlalchemy import RowMapping, func, select
 from sqlalchemy.orm import selectinload
 
+from app.features.catalogs.tables import (
+    general_contract_types,
+    general_cost_centers,
+    general_roles,
+    general_seniorities,
+    general_silos,
+)
 from app.features.employee.models import (
     EmployeeOperationalProfile,
     EmployeePerson,
@@ -78,3 +86,38 @@ class EmployeeRepository(BaseRepository):
             .where(EmployeePerson.id == person_id)
         )
         return self._session.execute(stmt).unique().scalar_one_or_none()
+
+    def get_person_positions(self, person_id: int) -> List[RowMapping]:
+        """Positions table of the employee's main view: one query with every catalog id
+        resolved to its name, active positions first. An unknown person returns []."""
+        stmt = (
+            select(
+                EmployeePosition.id,
+                EmployeePosition.contract_type_id,
+                EmployeePosition.currency,
+                EmployeePosition.start_date,
+                EmployeePosition.effective_date,
+                EmployeePosition.end_date,
+                EmployeePosition.salary,
+                EmployeePosition.additional_salary,
+                EmployeePosition.is_active,
+                EmployeePosition.cost,
+                EmployeePosition.bonus,
+                EmployeePosition.silo_id,
+                EmployeePosition.cost_center_id,
+                general_roles.c.name.label("employee_role"),
+                general_contract_types.c.name.label("contract_type"),
+                general_cost_centers.c.name.label("cost_center"),
+                general_seniorities.c.name.label("seniority"),
+                general_silos.c.name.label("silo"),
+            )
+            .join(EmployeeRole, EmployeeRole.id == EmployeePosition.employee_role_id)
+            .outerjoin(general_roles, general_roles.c.id == EmployeeRole.role_id)
+            .outerjoin(general_contract_types, general_contract_types.c.id == EmployeePosition.contract_type_id)
+            .outerjoin(general_cost_centers, general_cost_centers.c.id == EmployeePosition.cost_center_id)
+            .outerjoin(general_seniorities, general_seniorities.c.id == EmployeeRole.seniority_id)
+            .outerjoin(general_silos, general_silos.c.id == EmployeePosition.silo_id)
+            .where(EmployeeRole.person_id == person_id)
+            .order_by(EmployeePosition.is_active.desc().nulls_last(), EmployeePosition.id.desc())
+        )
+        return list(self._session.execute(stmt).mappings())

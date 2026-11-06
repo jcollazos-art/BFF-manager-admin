@@ -1,5 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 
+from sqlalchemy import RowMapping
+
 from app.features.employee.models import EmployeePerson
 from app.features.employee.repository import EmployeeRepository
 
@@ -17,3 +19,7 @@ def get_people(
 
 def get_person_detail(repo: EmployeeRepository, person_id: int) -> Optional[EmployeePerson]:
     return repo.get_person_detail(person_id)
+
+
+def get_person_positions(repo: EmployeeRepository, person_id: int) -> List[RowMapping]:
+    return repo.get_person_positions(person_id)
