@@ -2,7 +2,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from app.features.companies.models import CompanyAccount, TechnologyAccount
+from app.features.companies.models import CompanyAccount, CompanyTeam, TechnologyAccount
 
 
 def _insert(db: Session, row):
@@ -20,3 +20,7 @@ def make_account(db: Session, **overrides) -> CompanyAccount:
 def make_technology_account(db: Session, account: CompanyAccount, technology_id: int, **overrides) -> TechnologyAccount:
     fields = {"account_id": account.id, "technology_id": technology_id, **overrides}
     return _insert(db, TechnologyAccount(**fields))
+
+
+def make_team(db: Session, account: CompanyAccount, **overrides) -> CompanyTeam:
+    return _insert(db, CompanyTeam(**{"name": "Core", "account_id": account.id, **overrides}))

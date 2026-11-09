@@ -8,7 +8,7 @@ adds those, so each definition only lists its own columns. A feature that needs 
 an ORM entity maps onto the same table: `class GeneralCity(Base): __table__ = general_cities`.
 """
 
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, Integer, String, Table
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, Integer, Numeric, String, Table
 from sqlalchemy.dialects.postgresql import ARRAY
 
 from app.infrastructure.database import Base
@@ -97,6 +97,16 @@ general_augmented_services = _catalog(
     "general_augmented_services",
     Column("name", String),
     Column("description", String),
+)
+# Exchange rates per billing cycle - reference data with no `general_` prefix, served as the
+# "bill_exchange" catalog. Latest rate: sort=cycle_id, direction=desc, per_page=1.
+bill_exchange = _catalog(
+    "bill_exchange",
+    Column("cycle_id", Integer),
+    Column("name", String),
+    Column("conservative", Numeric(10, 2, asdecimal=False)),
+    Column("nominal", Numeric(10, 2, asdecimal=False)),
+    Column("real", Numeric(10, 2, asdecimal=False)),
 )
 general_bill_account_statuses = _catalog(
     "general_bill_account_statuses",

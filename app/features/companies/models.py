@@ -60,3 +60,17 @@ class TechnologyAccount(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     seniority_external_id: Mapped[Optional[int]] = mapped_column(Integer)
     knowledge_external_id: Mapped[Optional[int]] = mapped_column(Integer)
+
+
+class CompanyTeam(Base):
+    """A team inside an account."""
+
+    __tablename__ = "company_teams"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[Optional[str]] = mapped_column(String)
+    account_id: Mapped[Optional[int]] = mapped_column(Integer)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    start_date: Mapped[Optional[date]] = mapped_column(Date)
+    end_date: Mapped[Optional[date]] = mapped_column(Date)

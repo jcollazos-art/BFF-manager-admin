@@ -2,7 +2,10 @@
 sort and relations. Every catalog goes through the same generic code, so the behaviour is
 checked on a few representative ones."""
 
+from decimal import Decimal
+
 from app.features.catalogs.tables import (
+    bill_exchange,
     general_cities,
     general_countries,
     general_languages,
@@ -139,3 +142,13 @@ def test_invalid_body_is_rejected(client):
     assert status({"requests": [{"catalog": "languages", "per_page": 501}]}) == 422
     assert status({"requests": [{"catalog": "languages", "direction": "up"}]}) == 422
     assert status({"requests": [{"catalog": "languages"}, {"catalog": "languages"}]}) == 422  # use alias
+
+
+def test_latest_exchange_rate(client, db):
+    make_row(db, bill_exchange, cycle_id=1, nominal=Decimal("3900.00"), real=Decimal("3850.50"))
+    make_row(db, bill_exchange, cycle_id=2, nominal=Decimal("4100.00"), real=Decimal("4050.25"))
+
+    body = _post(client, {"catalog": "bill_exchange", "sort": "cycle_id", "direction": "desc", "per_page": 1})
+    (row,) = body["results"]["bill_exchange"]["data"]
+
+    assert (row["cycle_id"], row["nominal"], row["real"]) == (2, 4100.0, 4050.25)
