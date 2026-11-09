@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import RowMapping
 
-from app.features.employee.models import EmployeeComment, EmployeePerson
+from app.features.employee.models import EmployeeComment, EmployeePerson, EmployeePersonComment
 from app.features.employee.repository import EmployeeRepository
 
 
@@ -81,3 +81,7 @@ def get_person_actions(repo: EmployeeRepository, person_id: int) -> List[RowMapp
 
 def get_person_comments(repo: EmployeeRepository, person_id: int) -> List[EmployeeComment]:
     return repo.get_person_comments(person_id)
+
+
+def get_person_reported_comments(repo: EmployeeRepository, person_id: int) -> List[EmployeePersonComment]:
+    return repo.get_person_reported_comments(person_id)

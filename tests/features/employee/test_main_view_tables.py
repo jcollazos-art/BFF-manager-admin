@@ -19,6 +19,7 @@ from app.features.catalogs.tables import (
     technologies,
 )
 from app.features.employee.models import (
+    EmployeePersonComment,
     bill_exceptions,
     pcu_responses,
     report_employee_quality,
@@ -293,3 +294,24 @@ def test_comments_newest_first(client, db):
 
     assert [row["id"] for row in rows] == [new.id, old.id]
     assert set(rows[0]) == {"id", "comment", "retool_user", "created_at"}
+
+
+def test_reported_comments_newest_first_inactive_included(client, db):
+    person = make_person(db)
+
+    def comment(created_at, **overrides):
+        row = EmployeePersonComment(person_id=person.id, comment="Great work", reported_by="lead@lean.io",
+                                    created_at=created_at, updated_at=created_at, **overrides)
+        db.add(row)
+        db.flush()
+        return row.id
+
+    old = comment(datetime(2025, 1, 1), is_active=False)
+    new = comment(datetime(2025, 6, 1), is_active=True)
+    make_comment(db, person)  # employee_comments is a different table
+
+    rows = _get(client, person.id, "reported-comments")
+
+    assert [(row["id"], row["is_active"]) for row in rows] == [(new, True), (old, False)]
+    assert (rows[0]["comment"], rows[0]["reported_by"]) == ("Great work", "lead@lean.io")
+    assert _get(client, make_person(db).id, "reported-comments") == []

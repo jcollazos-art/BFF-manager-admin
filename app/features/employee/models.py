@@ -272,6 +272,21 @@ class EmployeeComment(Base):
     person: Mapped["EmployeePerson"] = relationship(back_populates="comments", lazy="raise")
 
 
+class EmployeePersonComment(Base):
+    """A second comments table, separate from employee_comments: it records who reported the
+    comment (`reported_by`) and can be deactivated (`is_active`)."""
+
+    __tablename__ = "employee_person_comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    person_id: Mapped[int] = mapped_column(Integer, ForeignKey("employee_persons.id"))
+    comment: Mapped[str] = mapped_column(String)
+    reported_by: Mapped[str] = mapped_column(String)
+    is_active: Mapped[Optional[bool]] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 # --- Tables owned by other domains, read-only here ---------------------------------------
 # The employee screens read them, but they belong to modules not migrated yet (operations:
 # PCU, quality and warrior reports; billing: bill exceptions). Plain Core tables, like the catalogs:

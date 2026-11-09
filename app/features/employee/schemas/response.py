@@ -415,6 +415,20 @@ class EmployeeActionOut(BaseModel):
     is_completed: Optional[bool]
 
 
+class EmployeeReportedCommentOut(BaseModel):
+    """A comment of employee_person_comments."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    person_id: int
+    comment: str
+    reported_by: str
+    is_active: Optional[bool]
+    created_at: datetime
+    updated_at: datetime
+
+
 class EmployeeCommentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

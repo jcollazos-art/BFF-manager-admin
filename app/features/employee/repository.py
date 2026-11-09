@@ -39,6 +39,7 @@ from app.features.employee.models import (
     EmployeeLanguage,
     EmployeeOperationalProfile,
     EmployeePerson,
+    EmployeePersonComment,
     EmployeePosition,
     EmployeeRole,
     EmployeeTechnology,
@@ -446,6 +447,16 @@ class EmployeeRepository(BaseRepository):
             .order_by(EmployeeAction.start_date.desc().nulls_last(), EmployeeAction.id.desc())
         )
         return list(self._session.execute(stmt).mappings())
+
+    def get_person_reported_comments(self, person_id: int) -> List[EmployeePersonComment]:
+        """Comments of employee_person_comments (with reporter and active flag), newest first.
+        Inactive ones included, as in Retool."""
+        stmt = (
+            select(EmployeePersonComment)
+            .where(EmployeePersonComment.person_id == person_id)
+            .order_by(EmployeePersonComment.created_at.desc(), EmployeePersonComment.id.desc())
+        )
+        return list(self._session.execute(stmt).scalars())
 
     def get_person_comments(self, person_id: int) -> List[EmployeeComment]:
         stmt = (

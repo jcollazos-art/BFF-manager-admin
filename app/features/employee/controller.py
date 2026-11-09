@@ -43,6 +43,7 @@ from app.features.employee.schemas.response import (
     EmployeePersonSummaryOut,
     EmployeePositionRowOut,
     EmployeeQualityReportOut,
+    EmployeeReportedCommentOut,
     EmployeeRoleRowOut,
     EmployeeRoleSeniorityOut,
     EmployeeTechnologyExperienceOut,
@@ -210,6 +211,12 @@ def get_employee_person_actions(person_id: int, repo: EmployeeRepository = Depen
 def get_employee_person_comments(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
     """Comments, newest first."""
     return Envelope(data=query.get_person_comments(repo, person_id))
+
+
+@router.get("/persons/{person_id}/reported-comments", response_model=Envelope[List[EmployeeReportedCommentOut]])
+def get_employee_person_reported_comments(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Comments with who reported them (employee_person_comments), newest first."""
+    return Envelope(data=query.get_person_reported_comments(repo, person_id))
 
 
 # --- writes -------------------------------------------------------------------------------
