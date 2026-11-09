@@ -244,6 +244,15 @@ class EmployeeWarriorEvaluationOut(BaseModel):
     last_evaluation_date: Optional[datetime]
 
 
+class EmployeeAccountPersonOut(BaseModel):
+    """An employee currently assigned to an account."""
+
+    id: int
+    name: str
+    corporate_email: Optional[str]
+    photo_url: Optional[str]
+
+
 class EmployeeAccountRiskOut(BaseModel):
     """Latest PCU risk status of one account."""
 

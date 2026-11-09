@@ -45,6 +45,10 @@ def get_person_active_account_ids(repo: EmployeeRepository, person_id: int) -> L
     return repo.get_person_active_account_ids(person_id)
 
 
+def get_account_active_persons(repo: EmployeeRepository, account_id: int) -> List[RowMapping]:
+    return repo.get_account_active_persons(account_id)
+
+
 def get_person_account_risks(repo: EmployeeRepository, person_id: int) -> List[RowMapping]:
     return repo.get_person_account_risks(person_id)
 

@@ -247,6 +247,29 @@ class EmployeeRepository(BaseRepository):
         )
         return list(self._session.execute(stmt).scalars())
 
+    def get_account_active_persons(self, account_id: int) -> List[RowMapping]:
+        """Employees with an assignation on the account that hasn't ended (no end_date, or
+        ending today or later - same rule as get_person_active_account_ids), by name. EXISTS
+        instead of Retool's DISTINCT: one row per person without deduplicating the joins."""
+        has_active_assignation = (
+            select(OperationAssignation.id)
+            .join(EmployeeOperationalProfile, EmployeeOperationalProfile.id == OperationAssignation.operational_profile_id)
+            .join(EmployeeRole, EmployeeRole.id == EmployeeOperationalProfile.employee_role_id)
+            .where(
+                EmployeeRole.person_id == EmployeePerson.id,
+                OperationAssignation.account_id == account_id,
+                or_(OperationAssignation.end_date.is_(None), OperationAssignation.end_date >= func.current_date()),
+            )
+            .exists()
+        )
+        name = func.concat_ws(" ", EmployeePerson.first_name, EmployeePerson.last_name)
+        stmt = (
+            select(EmployeePerson.id, name.label("name"), EmployeePerson.corporate_email, EmployeePerson.photo_url)
+            .where(has_active_assignation)
+            .order_by(name, EmployeePerson.id)
+        )
+        return list(self._session.execute(stmt).mappings())
+
     def get_person_account_risks(self, person_id: int) -> List[RowMapping]:
         """Latest PCU risk status of each account the employee has been assigned to, by account
         name. DISTINCT ON the account id, not only its name as Retool did, so two accounts

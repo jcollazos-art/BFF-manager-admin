@@ -112,6 +112,25 @@ def test_active_accounts_skip_ended_assignations(client, db):
     assert _get(client, person.id, "active-accounts") == [10, 20]
 
 
+# --- active persons of an account -----------------------------------------------------------
+
+
+def test_account_active_persons_once_each_by_name(client, db):
+    zoe, _, _ = make_assigned_employee(db, account_id=10, end_date=None)
+    zoe.first_name = "Zoe"
+    ana, ana_role, _ = make_assigned_employee(db, account_id=10, end_date=date.today())  # ends today -> active
+    make_assignation(db, make_operational_profile(db, ana_role), account_id=10, end_date=None)  # twice -> once
+    make_assigned_employee(db, account_id=10, end_date=date.today() - timedelta(days=1))  # ended
+    make_assigned_employee(db, account_id=20, end_date=None)  # other account
+
+    rows = client.get(f"{BASE}/accounts/10/active-persons").json()["data"]
+
+    assert rows == [
+        {"id": ana.id, "name": "Ana Gomez", "corporate_email": None, "photo_url": None},
+        {"id": zoe.id, "name": "Zoe Gomez", "corporate_email": None, "photo_url": None},
+    ]
+
+
 # --- account risks --------------------------------------------------------------------------
 
 

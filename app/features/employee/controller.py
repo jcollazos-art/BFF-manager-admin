@@ -30,6 +30,7 @@ from app.features.employee.schemas.request import (
     OperationAssignationUpsertItem,
 )
 from app.features.employee.schemas.response import (
+    EmployeeAccountPersonOut,
     EmployeeAccountRiskOut,
     EmployeeActionOut,
     EmployeeAssignationRowOut,
@@ -167,6 +168,12 @@ def get_employee_person_warrior_evaluations(person_id: int, repo: EmployeeReposi
 def get_employee_person_account_risks(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
     """Latest PCU risk status per account, by account name."""
     return Envelope(data=query.get_person_account_risks(repo, person_id))
+
+
+@router.get("/accounts/{account_id}/active-persons", response_model=Envelope[List[EmployeeAccountPersonOut]])
+def get_employee_account_active_persons(account_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Employees with an assignation on the account that hasn't ended, by name."""
+    return Envelope(data=query.get_account_active_persons(repo, account_id))
 
 
 @router.get("/persons/{person_id}/pcu-responses", response_model=Envelope[List[EmployeePcuResponseOut]])
