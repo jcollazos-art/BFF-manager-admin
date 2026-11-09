@@ -253,6 +253,31 @@ class EmployeeAccountRiskOut(BaseModel):
     color: Optional[str]
 
 
+class EmployeePcuResponseOut(BaseModel):
+    """One PCU response, with its account and risk status names."""
+
+    id: int
+    assignation_id: Optional[int]
+    manager_id: Optional[int]
+    productivity_score: Optional[int]
+    motivation_score: Optional[int]
+    environment_score: Optional[int]
+    productivity_comment: Optional[str]
+    motivation_comment: Optional[str]
+    environment_comment: Optional[str]
+    pending_topics: Optional[str]
+    is_visible_to_customers: Optional[bool]
+    report_date: Optional[date]
+    year_month: Optional[str]
+    account_id: Optional[int]
+    account: Optional[str]
+    risk_status_id: Optional[int]
+    risk_status: Optional[str]
+    risk_status_color: Optional[str]
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
+
 class EmployeeAssignationRowOut(BaseModel):
     """One (assignation, overlapping position) pair - built by sql/person_assignations.sql."""
 

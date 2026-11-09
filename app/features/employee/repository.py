@@ -271,6 +271,30 @@ class EmployeeRepository(BaseRepository):
         stmt = select(latest).order_by(latest.c.account, latest.c.account_id)
         return list(self._session.execute(stmt).mappings())
 
+    def get_person_pcu_responses(self, person_id: int) -> List[RowMapping]:
+        """PCU responses of every assignation of the employee, newest report first, with the
+        account and risk status names. `year_month` ("YYYY-MM") is the report month the PCU
+        table groups by."""
+        pcu = pcu_responses
+        stmt = (
+            select(
+                *pcu.c,
+                func.to_char(pcu.c.report_date, "YYYY-MM").label("year_month"),
+                OperationAssignation.account_id,
+                CompanyAccount.name.label("account"),
+                general_risk_statuses.c.name.label("risk_status"),
+                general_risk_statuses.c.color.label("risk_status_color"),
+            )
+            .join(OperationAssignation, OperationAssignation.id == pcu.c.assignation_id)
+            .join(EmployeeOperationalProfile, EmployeeOperationalProfile.id == OperationAssignation.operational_profile_id)
+            .join(EmployeeRole, EmployeeRole.id == EmployeeOperationalProfile.employee_role_id)
+            .outerjoin(CompanyAccount, CompanyAccount.id == OperationAssignation.account_id)
+            .outerjoin(general_risk_statuses, general_risk_statuses.c.id == pcu.c.risk_status_id)
+            .where(EmployeeRole.person_id == person_id)
+            .order_by(pcu.c.report_date.desc().nulls_last(), pcu.c.id.desc())
+        )
+        return list(self._session.execute(stmt).mappings())
+
     def get_person_role_seniorities(self, person_id: int) -> List[RowMapping]:
         """Per role, the employee's highest technology seniority (the role comes from each
         technology's `role_id`). Retool took MAX(name) and MAX(order) separately - MAX(name)

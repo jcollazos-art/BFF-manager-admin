@@ -38,6 +38,7 @@ from app.features.employee.schemas.response import (
     EmployeeLanguageRowOut,
     EmployeePersonDetailOut,
     EmployeePersonOut,
+    EmployeePcuResponseOut,
     EmployeePersonSummaryOut,
     EmployeePositionRowOut,
     EmployeeRoleRowOut,
@@ -165,6 +166,12 @@ def get_employee_person_warrior_evaluations(person_id: int, repo: EmployeeReposi
 def get_employee_person_account_risks(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
     """Latest PCU risk status per account, by account name."""
     return Envelope(data=query.get_person_account_risks(repo, person_id))
+
+
+@router.get("/persons/{person_id}/pcu-responses", response_model=Envelope[List[EmployeePcuResponseOut]])
+def get_employee_person_pcu_responses(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """PCU responses with account and risk status, newest report first."""
+    return Envelope(data=query.get_person_pcu_responses(repo, person_id))
 
 
 @router.get("/persons/{person_id}/active-accounts", response_model=Envelope[List[int]])

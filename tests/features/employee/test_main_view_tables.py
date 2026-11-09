@@ -130,6 +130,32 @@ def test_account_risks_latest_status_per_account(client, db):
     ]
 
 
+# --- PCU responses --------------------------------------------------------------------------
+
+
+def test_pcu_responses_newest_report_first_with_names(client, db):
+    red = make_row(db, general_risk_statuses, name="High", color="red")
+    acme = make_account(db, name="Acme")
+    person, _, assignation = make_assigned_employee(db, account_id=acme.id)
+
+    def pcu(report_date, risk_status_id=None):
+        return make_row(db, pcu_responses, assignation_id=assignation.id, report_date=report_date,
+                        risk_status_id=risk_status_id, is_visible_to_customers=False,
+                        created_at=datetime(2025, 1, 1), updated_at=datetime(2025, 1, 1))["id"]
+
+    old = pcu(date(2025, 1, 15))
+    new = pcu(date(2025, 6, 15), risk_status_id=red["id"])
+    make_assigned_employee(db)  # another person's assignation, without PCUs
+
+    rows = _get(client, person.id, "pcu-responses")
+
+    assert [row["id"] for row in rows] == [new, old]
+    assert (rows[0]["year_month"], rows[0]["account_id"], rows[0]["account"]) == ("2025-06", acme.id, "Acme")
+    assert (rows[0]["risk_status"], rows[0]["risk_status_color"]) == ("High", "red")
+    assert rows[1]["risk_status"] is None
+    assert _get(client, make_person(db).id, "pcu-responses") == []
+
+
 # --- seniority charts -----------------------------------------------------------------------
 
 
