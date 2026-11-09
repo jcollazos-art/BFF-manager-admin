@@ -41,6 +41,7 @@ from app.features.employee.schemas.response import (
     EmployeePcuResponseOut,
     EmployeePersonSummaryOut,
     EmployeePositionRowOut,
+    EmployeeQualityReportOut,
     EmployeeRoleRowOut,
     EmployeeRoleSeniorityOut,
     EmployeeTechnologyExperienceOut,
@@ -172,6 +173,12 @@ def get_employee_person_account_risks(person_id: int, repo: EmployeeRepository =
 def get_employee_person_pcu_responses(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
     """PCU responses with account and risk status, newest report first."""
     return Envelope(data=query.get_person_pcu_responses(repo, person_id))
+
+
+@router.get("/persons/{person_id}/quality-reports", response_model=Envelope[List[EmployeeQualityReportOut]])
+def get_employee_person_quality_reports(person_id: int, repo: EmployeeRepository = Depends(get_repository)):
+    """Quality reports with account and review source, newest first."""
+    return Envelope(data=query.get_person_quality_reports(repo, person_id))
 
 
 @router.get("/persons/{person_id}/active-accounts", response_model=Envelope[List[int]])

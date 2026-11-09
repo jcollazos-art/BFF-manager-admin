@@ -24,6 +24,7 @@ from app.features.catalogs.tables import (
     general_language_levels,
     general_languages,
     general_reasons,
+    general_review_sources,
     general_risk_statuses,
     general_roles,
     general_seniorities,
@@ -44,6 +45,7 @@ from app.features.employee.models import (
     OperationAssignation,
     bill_exceptions,
     pcu_responses,
+    report_employee_quality,
     report_employee_warrior,
 )
 from app.shared.repository import BaseRepository
@@ -292,6 +294,28 @@ class EmployeeRepository(BaseRepository):
             .outerjoin(general_risk_statuses, general_risk_statuses.c.id == pcu.c.risk_status_id)
             .where(EmployeeRole.person_id == person_id)
             .order_by(pcu.c.report_date.desc().nulls_last(), pcu.c.id.desc())
+        )
+        return list(self._session.execute(stmt).mappings())
+
+    def get_person_quality_reports(self, person_id: int) -> List[RowMapping]:
+        """Quality reports of every assignation of the employee, newest first, with the account
+        and review source names. `year_month` ("YYYY-MM") is the month of the report date."""
+        req = report_employee_quality
+        stmt = (
+            select(
+                *req.c,
+                func.to_char(req.c.date, "YYYY-MM").label("year_month"),
+                OperationAssignation.account_id,
+                CompanyAccount.name.label("account"),
+                general_review_sources.c.name.label("review_source"),
+            )
+            .join(OperationAssignation, OperationAssignation.id == req.c.assignation_id)
+            .join(EmployeeOperationalProfile, EmployeeOperationalProfile.id == OperationAssignation.operational_profile_id)
+            .join(EmployeeRole, EmployeeRole.id == EmployeeOperationalProfile.employee_role_id)
+            .outerjoin(CompanyAccount, CompanyAccount.id == OperationAssignation.account_id)
+            .outerjoin(general_review_sources, general_review_sources.c.id == req.c.review_source_id)
+            .where(EmployeeRole.person_id == person_id)
+            .order_by(req.c.date.desc().nulls_last(), req.c.id.desc())
         )
         return list(self._session.execute(stmt).mappings())
 

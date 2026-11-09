@@ -274,7 +274,7 @@ class EmployeeComment(Base):
 
 # --- Tables owned by other domains, read-only here ---------------------------------------
 # The employee screens read them, but they belong to modules not migrated yet (operations:
-# PCU and warrior reports; billing: bill exceptions). Plain Core tables, like the catalogs:
+# PCU, quality and warrior reports; billing: bill exceptions). Plain Core tables, like the catalogs:
 # when their feature exists, the table moves there and these queries import it from there.
 
 pcu_responses = Table(
@@ -295,6 +295,32 @@ pcu_responses = Table(
     Column("pending_topics", String),
     Column("is_visible_to_customers", Boolean),
     Column("risk_status_id", Integer),
+)
+
+report_employee_quality = Table(
+    "report_employee_quality",
+    Base.metadata,
+    Column("id", Integer, primary_key=True),
+    Column("assignation_id", Integer),
+    Column("english_score", Float),
+    Column("tech_skill_score", Float),
+    Column("engagement_score", Float),
+    Column("soft_skill", Float),
+    Column("date", Date),
+    Column("feedback", String),
+    Column("improvement_comment", String),
+    Column("performance_issues_comment", String),
+    Column("specific_changes_comment", String),
+    Column("is_reviewed", Boolean),
+    Column("reviewed_by", String),
+    Column("data_origin", String),
+    Column("disabled", Boolean),
+    Column("external_employee_id", Integer),
+    Column("review_source_id", Integer),
+    Column("attachment", String),
+    Column("url", String),
+    Column("created_at", DateTime),
+    Column("updated_at", DateTime),
 )
 
 report_employee_warrior = Table(

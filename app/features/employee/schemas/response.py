@@ -278,6 +278,36 @@ class EmployeePcuResponseOut(BaseModel):
     updated_at: Optional[datetime]
 
 
+class EmployeeQualityReportOut(BaseModel):
+    """One quality report, with its account and review source names."""
+
+    id: int
+    assignation_id: Optional[int]
+    english_score: Optional[float]
+    tech_skill_score: Optional[float]
+    engagement_score: Optional[float]
+    soft_skill: Optional[float]
+    date: Optional[date]
+    year_month: Optional[str]
+    feedback: Optional[str]
+    improvement_comment: Optional[str]
+    performance_issues_comment: Optional[str]
+    specific_changes_comment: Optional[str]
+    is_reviewed: Optional[bool]
+    reviewed_by: Optional[str]
+    data_origin: Optional[str]
+    disabled: Optional[bool]
+    external_employee_id: Optional[int]
+    review_source_id: Optional[int]
+    review_source: Optional[str]
+    attachment: Optional[str]
+    url: Optional[str]
+    account_id: Optional[int]
+    account: Optional[str]
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
+
 class EmployeeAssignationRowOut(BaseModel):
     """One (assignation, overlapping position) pair - built by sql/person_assignations.sql."""
 

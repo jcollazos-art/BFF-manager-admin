@@ -11,13 +11,19 @@ from app.features.catalogs.tables import (
     general_language_levels,
     general_languages,
     general_reasons,
+    general_review_sources,
     general_risk_statuses,
     general_roles,
     general_seniorities,
     general_warrior_types,
     technologies,
 )
-from app.features.employee.models import bill_exceptions, pcu_responses, report_employee_warrior
+from app.features.employee.models import (
+    bill_exceptions,
+    pcu_responses,
+    report_employee_quality,
+    report_employee_warrior,
+)
 from tests.features.catalogs.factories import make_row
 from tests.features.companies.factories import make_account
 from tests.features.employee.factories import (
@@ -154,6 +160,32 @@ def test_pcu_responses_newest_report_first_with_names(client, db):
     assert (rows[0]["risk_status"], rows[0]["risk_status_color"]) == ("High", "red")
     assert rows[1]["risk_status"] is None
     assert _get(client, make_person(db).id, "pcu-responses") == []
+
+
+# --- quality reports ------------------------------------------------------------------------
+
+
+def test_quality_reports_newest_first_with_names(client, db):
+    client_review = make_row(db, general_review_sources, name="Client", type="quality")
+    acme = make_account(db, name="Acme")
+    person, _, assignation = make_assigned_employee(db, account_id=acme.id)
+
+    def report(report_date, review_source_id=None):
+        return make_row(db, report_employee_quality, assignation_id=assignation.id, date=report_date,
+                        review_source_id=review_source_id, english_score=4.5, is_reviewed=False,
+                        created_at=datetime(2025, 1, 1), updated_at=datetime(2025, 1, 1))["id"]
+
+    old = report(date(2025, 1, 15))
+    new = report(date(2025, 6, 15), review_source_id=client_review["id"])
+    make_assigned_employee(db)  # another person's assignation, without reports
+
+    rows = _get(client, person.id, "quality-reports")
+
+    assert [row["id"] for row in rows] == [new, old]
+    assert (rows[0]["date"], rows[0]["year_month"], rows[0]["english_score"]) == ("2025-06-15", "2025-06", 4.5)
+    assert (rows[0]["account_id"], rows[0]["account"], rows[0]["review_source"]) == (acme.id, "Acme", "Client")
+    assert rows[1]["review_source"] is None
+    assert _get(client, make_person(db).id, "quality-reports") == []
 
 
 # --- seniority charts -----------------------------------------------------------------------

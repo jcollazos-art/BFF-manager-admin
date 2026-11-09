@@ -53,6 +53,10 @@ def get_person_pcu_responses(repo: EmployeeRepository, person_id: int) -> List[R
     return repo.get_person_pcu_responses(person_id)
 
 
+def get_person_quality_reports(repo: EmployeeRepository, person_id: int) -> List[RowMapping]:
+    return repo.get_person_quality_reports(person_id)
+
+
 def get_person_role_seniorities(repo: EmployeeRepository, person_id: int) -> List[RowMapping]:
     return repo.get_person_role_seniorities(person_id)
 
