@@ -248,6 +248,20 @@ class EmployeeRepository(BaseRepository):
         )
         return list(self._session.execute(stmt).scalars())
 
+    def get_technology_external_ids(self) -> List[RowMapping]:
+        """Every employee technology linked to the external knowledge catalog (has a
+        `knowledge_external_id`), with its external seniority."""
+        stmt = (
+            select(
+                EmployeeTechnology.person_id,
+                EmployeeTechnology.knowledge_external_id,
+                EmployeeTechnology.seniority_external_id,
+            )
+            .where(EmployeeTechnology.knowledge_external_id.is_not(None))
+            .order_by(EmployeeTechnology.person_id, EmployeeTechnology.id)
+        )
+        return list(self._session.execute(stmt).mappings())
+
     def get_account_active_persons(self, account_id: int) -> List[RowMapping]:
         """Employees with an assignation on the account that hasn't ended (no end_date, or
         ending today or later - same rule as get_person_active_account_ids), by name. EXISTS

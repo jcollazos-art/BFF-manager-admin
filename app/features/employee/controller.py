@@ -37,6 +37,11 @@ from app.features.employee.schemas.response import (
     EmployeeBillExceptionOut,
     EmployeeCommentOut,
     EmployeeLanguageRowOut,
+    EmployeeLastPositionOut,
+    EmployeeManagerOptionOut,
+    EmployeeMonthlyHeadcountOut,
+    EmployeeSalaryIncreaseOut,
+    EmployeeTechnologyExternalIdOut,
     EmployeePersonDetailOut,
     EmployeePersonOut,
     EmployeePcuResponseOut,
@@ -81,6 +86,39 @@ def get_employee_persons(
         page=pagination.page, per_page=pagination.per_page,
     )
     return Page(data=data, total=total, page=pagination.page, per_page=pagination.per_page)
+
+
+# --- whole-company lists (no person id) - declared before any /persons/{person_id} route ---
+
+
+@router.get("/persons/last-position", response_model=Envelope[List[EmployeeLastPositionOut]])
+def get_employee_persons_last_position(db: Session = Depends(get_db)):
+    """Every employee with personal data and their latest position, by name (custom SQL)."""
+    return Envelope(data=custom_repository.get_persons_last_position(db))
+
+
+@router.get("/persons/last-salary-increases", response_model=Envelope[List[EmployeeSalaryIncreaseOut]])
+def get_employee_persons_last_salary_increases(db: Session = Depends(get_db)):
+    """Date of each employee's latest salary increase (custom SQL)."""
+    return Envelope(data=custom_repository.get_last_salary_increases(db))
+
+
+@router.get("/managers/options", response_model=Envelope[List[EmployeeManagerOptionOut]])
+def get_employee_manager_options(db: Session = Depends(get_db)):
+    """Managers for the dashboard's managers filter, with their profile ids (custom SQL)."""
+    return Envelope(data=custom_repository.get_manager_options(db))
+
+
+@router.get("/headcount/monthly", response_model=Envelope[List[EmployeeMonthlyHeadcountOut]])
+def get_employee_monthly_headcount(db: Session = Depends(get_db)):
+    """Employees with a position in each month since 2020-01 (custom SQL)."""
+    return Envelope(data=custom_repository.get_monthly_headcount(db))
+
+
+@router.get("/technologies/external-ids", response_model=Envelope[List[EmployeeTechnologyExternalIdOut]])
+def get_employee_technology_external_ids(repo: EmployeeRepository = Depends(get_repository)):
+    """Employee technologies linked to the external knowledge catalog."""
+    return Envelope(data=query.get_technology_external_ids(repo))
 
 
 @router.get("/details/{person_id}", response_model=Envelope[EmployeePersonDetailOut])

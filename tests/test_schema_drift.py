@@ -14,6 +14,7 @@ from sqlalchemy.exc import OperationalError
 import app.features.catalogs.tables  # noqa: F401 - registers the tables on Base.metadata
 import app.features.companies.models  # noqa: F401 - registers the tables on Base.metadata
 import app.features.employee.models  # noqa: F401 - registers the tables on Base.metadata
+import app.features.employee_dashboard.models  # noqa: F401 - registers the tables on Base.metadata
 from app.infrastructure.database import Base, engine
 
 pytestmark = pytest.mark.drift

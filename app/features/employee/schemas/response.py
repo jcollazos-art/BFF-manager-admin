@@ -436,3 +436,51 @@ class EmployeeCommentOut(BaseModel):
     comment: Optional[str]
     retool_user: Optional[str]
     created_at: Optional[datetime]
+
+
+# --- Whole-company lists (no person id) ------------------------------------------------------
+
+
+class EmployeeLastPositionOut(BaseModel):
+    """An employee with personal data and their latest position - sql/persons_last_position.sql."""
+
+    person_id: int
+    full_name: str
+    personal_email: Optional[str]
+    corporate_email: Optional[str]
+    identification_type: Optional[str]
+    identification: Optional[str]
+    birth_date: Optional[date]
+    phone_number: Optional[str]
+    address: Optional[str]
+    city: Optional[str]
+    country: Optional[str]
+    position_id: int
+    is_active: Optional[bool]
+    contract_type_id: Optional[int]
+
+
+class EmployeeSalaryIncreaseOut(BaseModel):
+    person_id: int
+    effective_date: Optional[date]
+
+
+class EmployeeManagerOptionOut(BaseModel):
+    """`profile_ids` are what company_accounts.manager_id points to."""
+
+    id: int
+    name: str
+    role: Optional[str]
+    profile_ids: List[int]
+
+
+class EmployeeMonthlyHeadcountOut(BaseModel):
+    year_month: str
+    employees: int
+    person_ids: List[int]
+
+
+class EmployeeTechnologyExternalIdOut(BaseModel):
+    person_id: int
+    knowledge_external_id: int
+    seniority_external_id: Optional[int]
