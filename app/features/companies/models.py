@@ -8,7 +8,7 @@ account_type_id, ...) are plain integer columns, no FK/relationship."""
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, Integer, String
+from sqlalchemy import Boolean, Column, Date, DateTime, Integer, String, Table
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -74,3 +74,54 @@ class CompanyTeam(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     start_date: Mapped[Optional[date]] = mapped_column(Date)
     end_date: Mapped[Optional[date]] = mapped_column(Date)
+
+
+class CompanyPoc(Base):
+    """A client contact (point of contact) of a company; the person lives in general.persons."""
+
+    __tablename__ = "company_pocs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # A general.persons id.
+    external_person_id: Mapped[Optional[int]] = mapped_column(Integer)
+    company_id: Mapped[Optional[int]] = mapped_column(Integer)
+    is_active: Mapped[Optional[bool]] = mapped_column(Boolean)
+    is_main: Mapped[Optional[bool]] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_updated_by: Mapped[Optional[str]] = mapped_column(String)
+
+
+class AccountPoc(Base):
+    """A company POC assigned to one of the company's accounts."""
+
+    __tablename__ = "account_pocs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_poc_id: Mapped[Optional[int]] = mapped_column(Integer)
+    account_id: Mapped[Optional[int]] = mapped_column(Integer)
+    is_active: Mapped[Optional[bool]] = mapped_column(Boolean)
+    is_main: Mapped[Optional[bool]] = mapped_column(Boolean)
+    nps_contact: Mapped[Optional[bool]] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_updated_by: Mapped[Optional[str]] = mapped_column(String)
+
+
+# Shared persons registry (schema `general`, not `public`), owned by another system - read-only
+# Core table, only the columns used here. Client contacts (company_pocs) point to it.
+general_persons = Table(
+    "persons",
+    Base.metadata,
+    Column("id", Integer, primary_key=True),
+    Column("first_name", String, nullable=False),
+    Column("last_name", String, nullable=False),
+    Column("personal_email", String),
+    Column("corporate_email", String),
+    Column("is_active", Boolean),
+    Column("created_at", DateTime, nullable=False),
+    Column("updated_at", DateTime, nullable=False),
+    schema="general",
+)

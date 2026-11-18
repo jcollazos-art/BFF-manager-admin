@@ -285,6 +285,32 @@ class EmployeeRepository(BaseRepository):
         )
         return list(self._session.execute(stmt).mappings())
 
+    def get_account_ended_assignations(self, account_id: int, assignation_ids: List[int]) -> List[RowMapping]:
+        """Of `assignation_ids`, the ones on the account that already ended (end_date before
+        today - an assignation ending today is still active, as in get_account_active_persons),
+        with the employee's name and email, by last name then first name. No ids -> [] (as in
+        Retool: it narrows a given list, it never lists the whole account)."""
+        if not assignation_ids:
+            return []
+        stmt = (
+            select(
+                OperationAssignation.id,
+                EmployeeRole.person_id,
+                func.concat_ws(" ", EmployeePerson.first_name, EmployeePerson.last_name).label("name"),
+                EmployeePerson.corporate_email.label("email"),
+            )
+            .join(EmployeeOperationalProfile, EmployeeOperationalProfile.id == OperationAssignation.operational_profile_id)
+            .join(EmployeeRole, EmployeeRole.id == EmployeeOperationalProfile.employee_role_id)
+            .join(EmployeePerson, EmployeePerson.id == EmployeeRole.person_id)
+            .where(
+                OperationAssignation.account_id == account_id,
+                OperationAssignation.id.in_(assignation_ids),
+                OperationAssignation.end_date < func.current_date(),
+            )
+            .order_by(EmployeePerson.last_name, EmployeePerson.first_name, OperationAssignation.id)
+        )
+        return list(self._session.execute(stmt).mappings())
+
     def get_person_account_risks(self, person_id: int) -> List[RowMapping]:
         """Latest PCU risk status of each account the employee has been assigned to, by account
         name. DISTINCT ON the account id, not only its name as Retool did, so two accounts

@@ -44,18 +44,21 @@ def test_models_match_the_real_database():
     except OperationalError as exc:
         pytest.skip(f"real database not reachable: {exc.orig}")
 
-    # One round trip for every table's columns - per-table calls take minutes over the network.
+    # One round trip per schema for every table's columns - per-table calls take minutes over
+    # the network. Keyed by (schema, table); None is the default schema (public).
+    schemas = {table.schema for table in Base.metadata.tables.values()}
     real_tables = {
-        table_name: {column["name"]: column["type"] for column in columns}
-        for (_, table_name), columns in inspector.get_multi_columns().items()
+        (schema, table_name): {column["name"]: column["type"] for column in columns}
+        for schema in schemas
+        for (_, table_name), columns in inspector.get_multi_columns(schema=schema).items()
     }
 
     problems = []
     for table in Base.metadata.sorted_tables:
-        if table.name not in real_tables:
-            problems.append(f"{table.name}: table does not exist")
+        if (table.schema, table.name) not in real_tables:
+            problems.append(f"{table.fullname}: table does not exist")
             continue
-        real_columns = real_tables[table.name]
+        real_columns = real_tables[(table.schema, table.name)]
         for column in table.columns:
             if column.name not in real_columns:
                 problems.append(f"{table.name}.{column.name}: column does not exist")

@@ -3,7 +3,7 @@ project (see shared/permissions.py). Once one does, it goes on `APIRouter(...,
 dependencies=[...])` here, exactly like every router in bff-lsg-placement - nothing else
 in this file needs to change for that."""
 
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
@@ -36,22 +36,23 @@ from app.features.employee.schemas.response import (
     EmployeeAssignationRowOut,
     EmployeeBillExceptionOut,
     EmployeeCommentOut,
+    EmployeeEndedAssignationOut,
     EmployeeLanguageRowOut,
     EmployeeLastPositionOut,
     EmployeeManagerOptionOut,
     EmployeeMonthlyHeadcountOut,
-    EmployeeSalaryIncreaseOut,
-    EmployeeTechnologyExternalIdOut,
+    EmployeePcuResponseOut,
     EmployeePersonDetailOut,
     EmployeePersonOut,
-    EmployeePcuResponseOut,
     EmployeePersonSummaryOut,
     EmployeePositionRowOut,
     EmployeeQualityReportOut,
     EmployeeReportedCommentOut,
     EmployeeRoleRowOut,
     EmployeeRoleSeniorityOut,
+    EmployeeSalaryIncreaseOut,
     EmployeeTechnologyExperienceOut,
+    EmployeeTechnologyExternalIdOut,
     EmployeeTechnologyRowOut,
     EmployeeTechnologySeniorityOut,
     EmployeeWarriorEvaluationOut,
@@ -213,6 +214,17 @@ def get_employee_person_account_risks(person_id: int, repo: EmployeeRepository =
 def get_employee_account_active_persons(account_id: int, repo: EmployeeRepository = Depends(get_repository)):
     """Employees with an assignation on the account that hasn't ended, by name."""
     return Envelope(data=query.get_account_active_persons(repo, account_id))
+
+
+@router.get("/accounts/{account_id}/ended-assignations", response_model=Envelope[List[EmployeeEndedAssignationOut]])
+def get_employee_account_ended_assignations(
+    account_id: int,
+    assignation_ids: Annotated[List[int], Query()] = [],
+    repo: EmployeeRepository = Depends(get_repository),
+):
+    """Of `assignation_ids` (?assignation_ids=1&assignation_ids=2), the ones on the account
+    that already ended, with the employee's name and email. No ids returns []."""
+    return Envelope(data=query.get_account_ended_assignations(repo, account_id, assignation_ids))
 
 
 @router.get("/persons/{person_id}/pcu-responses", response_model=Envelope[List[EmployeePcuResponseOut]])

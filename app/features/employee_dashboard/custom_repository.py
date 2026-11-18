@@ -19,7 +19,6 @@ _ENGLISH_LEVELS = load_sql(__file__, "english_levels")
 _SENIORITIES = load_sql(__file__, "seniorities")
 _MAIN_TECHNOLOGIES = load_sql(__file__, "main_technologies")
 _FINANCIALS = load_sql(__file__, "financials")
-_COST_TOTALS = load_sql(__file__, "cost_totals")
 _NEW_ASSIGNATIONS = load_sql(__file__, "new_assignations")
 _LEAVING = load_sql(__file__, "leaving")
 _HEADCOUNT = load_sql(__file__, "headcount")
@@ -46,10 +45,6 @@ def get_main_technologies(db: Session, filters: DashboardFilters) -> List[Row]:
 
 def get_financials(db: Session, filters: DashboardFilters, month: str) -> Optional[Row]:
     return fetch_one(db, _FINANCIALS, **_params(filters, month=month))
-
-
-def get_cost_totals(db: Session) -> Optional[Row]:
-    return fetch_one(db, _COST_TOTALS)
 
 
 def get_new_assignations(db: Session, filters: DashboardFilters, month: str) -> Optional[Row]:

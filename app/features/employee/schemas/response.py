@@ -244,6 +244,15 @@ class EmployeeWarriorEvaluationOut(BaseModel):
     last_evaluation_date: Optional[datetime]
 
 
+class EmployeeEndedAssignationOut(BaseModel):
+    """An ended assignation on an account, with its employee."""
+
+    id: int
+    person_id: int
+    name: str
+    email: Optional[str]
+
+
 class EmployeeAccountPersonOut(BaseModel):
     """An employee currently assigned to an account."""
 

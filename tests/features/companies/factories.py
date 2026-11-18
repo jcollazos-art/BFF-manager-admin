@@ -2,7 +2,15 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from app.features.companies.models import CompanyAccount, CompanyTeam, TechnologyAccount
+from app.features.companies.models import (
+    AccountPoc,
+    CompanyAccount,
+    CompanyPoc,
+    CompanyTeam,
+    TechnologyAccount,
+    general_persons,
+)
+from tests.features.catalogs.factories import make_row
 
 
 def _insert(db: Session, row):
@@ -24,3 +32,10 @@ def make_technology_account(db: Session, account: CompanyAccount, technology_id:
 
 def make_team(db: Session, account: CompanyAccount, **overrides) -> CompanyTeam:
     return _insert(db, CompanyTeam(**{"name": "Core", "account_id": account.id, **overrides}))
+
+
+def make_account_poc(db: Session, account: CompanyAccount, *, person: dict = None, **overrides) -> AccountPoc:
+    """general.persons row -> company_pocs -> account_pocs on `account`, active by default."""
+    person_row = make_row(db, general_persons, **{"first_name": "Laura", "last_name": "Diaz", **(person or {})})
+    company_poc = _insert(db, CompanyPoc(external_person_id=person_row["id"], is_active=True))
+    return _insert(db, AccountPoc(**{"company_poc_id": company_poc.id, "account_id": account.id, "is_active": True, **overrides}))

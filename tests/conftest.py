@@ -29,7 +29,7 @@ for key, value in {
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 from testcontainers.community.postgres import PostgresContainer  # noqa: E402
 
@@ -58,6 +58,10 @@ def engine():
     _require_docker()
     with PostgresContainer(POSTGRES_IMAGE, driver="psycopg2") as postgres:
         engine = create_engine(postgres.get_connection_url())
+        # Tables outside `public` (e.g. general.persons) need their schema first.
+        with engine.begin() as connection:
+            for schema in {table.schema for table in Base.metadata.tables.values() if table.schema}:
+                connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
         Base.metadata.create_all(engine)
         yield engine
         engine.dispose()

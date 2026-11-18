@@ -15,3 +15,11 @@ class CompanyTeamOptionOut(BaseModel):
     id: int
     name: Optional[str]
     account_id: Optional[int]
+
+
+class CompanyAccountPocOut(BaseModel):
+    """An active client contact of an account; `id` is the account_pocs id."""
+
+    id: int
+    name: str
+    email: Optional[str]

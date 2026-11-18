@@ -132,6 +132,25 @@ def test_account_active_persons_once_each_by_name(client, db):
     ]
 
 
+def test_account_ended_assignations_only_given_ids_by_last_name(client, db):
+    zoe, _, zoe_ended = make_assigned_employee(db, account_id=10, end_date=date.today() - timedelta(days=3))
+    zoe.last_name = "Zapata"
+    ana, _, ana_ended = make_assigned_employee(db, account_id=10, end_date=date.today() - timedelta(days=1))
+    _, _, ends_today = make_assigned_employee(db, account_id=10, end_date=date.today())  # still active
+    _, _, open_ = make_assigned_employee(db, account_id=10, end_date=None)
+    _, _, other_account = make_assigned_employee(db, account_id=20, end_date=date.today() - timedelta(days=1))
+    make_assigned_employee(db, account_id=10, end_date=date.today() - timedelta(days=1))  # not asked for
+    ids = [zoe_ended.id, ana_ended.id, ends_today.id, open_.id, other_account.id]
+
+    rows = client.get(f"{BASE}/accounts/10/ended-assignations", params={"assignation_ids": ids}).json()["data"]
+
+    assert rows == [
+        {"id": ana_ended.id, "person_id": ana.id, "name": "Ana Gomez", "email": None},
+        {"id": zoe_ended.id, "person_id": zoe.id, "name": "Ana Zapata", "email": None},
+    ]
+    assert client.get(f"{BASE}/accounts/10/ended-assignations").json()["data"] == []
+
+
 # --- account risks --------------------------------------------------------------------------
 
 

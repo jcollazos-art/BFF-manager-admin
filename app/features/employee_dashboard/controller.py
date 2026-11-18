@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.features.employee_dashboard import custom_repository
+from app.features.employee_dashboard.repository import DashboardRepository
 from app.features.employee_dashboard.schemas.request import DashboardFilters
 from app.features.employee_dashboard.schemas.response import (
     CostTotalsOut,
@@ -28,6 +29,11 @@ from app.infrastructure.database import get_db
 from app.shared.responses import Envelope
 
 router = APIRouter(prefix="/employee/dashboard", tags=["Employee dashboard"])
+
+
+def get_repository(db: Session = Depends(get_db)) -> DashboardRepository:
+    return DashboardRepository(db)
+
 
 Filters = Annotated[DashboardFilters, Query()]
 Month = Annotated[str, Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="YYYY-MM", examples=["2026-11"])]
@@ -63,9 +69,9 @@ def get_financials(month: Month, filters: Filters, db: Session = Depends(get_db)
 
 
 @router.get("/cost-totals", response_model=Envelope[CostTotalsOut])
-def get_cost_totals(db: Session = Depends(get_db)):
+def get_cost_totals(repo: DashboardRepository = Depends(get_repository)):
     """Real cost and cost totals of the whole cost history. No filters."""
-    return Envelope(data=custom_repository.get_cost_totals(db))
+    return Envelope(data=repo.get_cost_totals())
 
 
 @router.get("/new-assignations", response_model=Envelope[NewAssignationsOut])

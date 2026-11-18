@@ -53,6 +53,12 @@ def get_account_active_persons(repo: EmployeeRepository, account_id: int) -> Lis
     return repo.get_account_active_persons(account_id)
 
 
+def get_account_ended_assignations(
+    repo: EmployeeRepository, account_id: int, assignation_ids: List[int]
+) -> List[RowMapping]:
+    return repo.get_account_ended_assignations(account_id, assignation_ids)
+
+
 def get_person_account_risks(repo: EmployeeRepository, person_id: int) -> List[RowMapping]:
     return repo.get_person_account_risks(person_id)
 
